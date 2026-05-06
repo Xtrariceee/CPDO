@@ -64,7 +64,10 @@ function create_application(int $landlordId, array $data): int
     $registry = 'REG-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
     $encryptedTitle = encrypt_sensitive($data['land_title_reference'] ?? '');
 
-    $stmt = db()->prepare(
+    // Hold a reference to the exact PDO instance so lastInsertId() is
+    // guaranteed to be called on the same connection that ran the INSERT.
+    $pdo  = db();
+    $stmt = $pdo->prepare(
         'INSERT INTO applications (landlord_id, registry_number, account_name, account_address, property_title, property_address, coordinates, sensitive_land_title_enc, sensitive_land_title_nonce)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
@@ -80,7 +83,13 @@ function create_application(int $landlordId, array $data): int
         $encryptedTitle['nonce'],
     ]);
 
-    $applicationId = (int)db()->lastInsertId();
+    // Call lastInsertId() on the same $pdo object — never via db() which
+    // may reconnect and return a fresh connection with no insert history.
+    $applicationId = (int)$pdo->lastInsertId();
+    if ($applicationId === 0) {
+        throw new RuntimeException('INSERT into applications returned lastInsertId() = 0. Row count: ' . $stmt->rowCount());
+    }
+
     seed_requirement_rows($applicationId);
     audit_log($landlordId, 'APPLICATION_CREATED', 'applications', $applicationId, ['registry_number' => $registry]);
     return $applicationId;

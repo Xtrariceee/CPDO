@@ -7,7 +7,7 @@ try {
     $user = require_role([ROLE_LANDLORD]);
     verify_csrf();
 
-    $applicationId = (int)($_POST['application_id'] ?? 0);
+    $applicationId  = (int)($_POST['application_id'] ?? 0);
     $requirementKey = trim($_POST['requirement_key'] ?? '');
 
     $appStmt = db()->prepare('SELECT id FROM applications WHERE id = ? AND landlord_id = ?');
@@ -27,19 +27,28 @@ try {
         throw new RuntimeException('No file selected.');
     }
 
-    $path = secure_upload($_FILES['document_file'], 'applications/' . $applicationId);
+    // Store file binary in DB
+    $upload        = read_upload_for_db($_FILES['document_file']);
     $encryptedName = encrypt_sensitive($_FILES['document_file']['name']);
+
     $update = db()->prepare(
         'UPDATE requirement_documents
-         SET file_path = ?, original_name_enc = ?, original_name_nonce = ?, uploaded_at = NOW()
+         SET file_data = ?, file_mime = ?, file_path = NULL,
+             original_name_enc = ?, original_name_nonce = ?, uploaded_at = NOW()
          WHERE id = ?'
     );
-    $update->execute([$path, $encryptedName['ciphertext'], $encryptedName['nonce'], (int)$document['id']]);
+    $update->execute([
+        $upload['file_data'],
+        $upload['file_mime'],
+        $encryptedName['ciphertext'],
+        $encryptedName['nonce'],
+        (int)$document['id'],
+    ]);
     audit_log((int)$user['id'], 'REQUIREMENT_AUTOSAVED', 'requirement_documents', (int)$document['id']);
 
     echo json_encode([
-        'ok' => true,
-        'message' => 'File saved.',
+        'ok'          => true,
+        'message'     => 'File saved.',
         'preview_url' => '../document_preview.php?id=' . (int)$document['id'],
     ]);
 } catch (Throwable $exception) {

@@ -43,12 +43,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $applicationId      = $status['source'] === 'application' ? (int)$status['record']['id'] : null;
         $complianceUploadId = $status['source'] === 'skip'        ? (int)$status['record']['id'] : null;
-        $stmt = db()->prepare(
+        $pdo  = db();
+        $stmt = $pdo->prepare(
             'INSERT INTO properties (landlord_id, application_id, compliance_upload_id, title, address, description, monthly_rent, status)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([(int)$user['id'], $applicationId, $complianceUploadId, $title, $address, $description ?: null, $rent, $listingStatus]);
-        $propertyId = (int)db()->lastInsertId();
+        $propertyId = (int)$pdo->lastInsertId();
         audit_log((int)$user['id'], 'PROPERTY_CREATED', 'properties', $propertyId);
     }
 

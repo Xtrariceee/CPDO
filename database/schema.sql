@@ -16,6 +16,7 @@ DROP VIEW IF EXISTS payments;
 DROP VIEW IF EXISTS evaluations;
 DROP VIEW IF EXISTS documents;
 DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS role_upgrade_requests;
 DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS properties;
 DROP TABLE IF EXISTS compliance_uploads;
@@ -38,6 +39,9 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NULL,
     google_id VARCHAR(190) NULL UNIQUE,
     role ENUM('admin','zoning_officer','admin_officer','twg_member','landlord','tenant') NOT NULL DEFAULT 'landlord',
+    -- google_registered_role: the role the user selected when registering via Google
+    -- NULL means Google account was auto-created (sign-in only, no explicit registration)
+    google_registered_role ENUM('landlord','tenant') NULL DEFAULT NULL,
     status ENUM('ACTIVE','DISABLED') NOT NULL DEFAULT 'ACTIVE',
     otp_code VARCHAR(6) NULL,
     otp_expiry DATETIME NULL,
@@ -103,7 +107,10 @@ CREATE TABLE requirement_documents (
     requirement_key VARCHAR(80) NOT NULL,
     group_name VARCHAR(120) NOT NULL,
     title VARCHAR(255) NOT NULL,
+    -- file stored in DB as base64-encoded binary; file_path kept for legacy/fallback
     file_path VARCHAR(255) NULL,
+    file_data LONGBLOB NULL,
+    file_mime VARCHAR(80) NULL,
     original_name_enc TEXT NULL,
     original_name_nonce VARCHAR(32) NULL,
     evaluation_status ENUM('PENDING','PASSED','FAILED') NOT NULL DEFAULT 'PENDING',
@@ -286,6 +293,30 @@ CREATE TABLE notifications (
         ON UPDATE CASCADE
         ON DELETE CASCADE,
     INDEX idx_notifications_user_read (user_id, read_at)
+) ENGINE=InnoDB;
+
+-- role_upgrade_requests: tenant requests to become a landlord
+CREATE TABLE role_upgrade_requests (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    from_role ENUM('tenant') NOT NULL DEFAULT 'tenant',
+    to_role ENUM('landlord') NOT NULL DEFAULT 'landlord',
+    reason TEXT NULL,
+    status ENUM('PENDING','APPROVED','REJECTED') NOT NULL DEFAULT 'PENDING',
+    reviewed_by BIGINT UNSIGNED NULL,
+    reviewed_at DATETIME NULL,
+    admin_notes TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_upgrade_user
+        FOREIGN KEY (user_id) REFERENCES users(id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT fk_upgrade_reviewer
+        FOREIGN KEY (reviewed_by) REFERENCES users(id)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL,
+    INDEX idx_upgrade_status (status),
+    INDEX idx_upgrade_user (user_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE audit_logs (

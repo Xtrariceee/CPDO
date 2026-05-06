@@ -16,20 +16,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $docStmt = db()->prepare('SELECT * FROM requirement_documents WHERE application_id = ?');
     $docStmt->execute([$applicationId]);
     $docs = $docStmt->fetchAll();
+
     $update = db()->prepare(
-        'UPDATE requirement_documents SET file_path = ?, original_name_enc = ?, original_name_nonce = ?, uploaded_at = NOW() WHERE id = ?'
+        'UPDATE requirement_documents
+         SET file_data = ?, file_mime = ?, file_path = NULL,
+             original_name_enc = ?, original_name_nonce = ?, uploaded_at = NOW()
+         WHERE id = ?'
     );
 
     foreach ($docs as $doc) {
         $key = $doc['requirement_key'];
-        if (!empty($_FILES[$key]['name'])) {
-            $path = secure_upload($_FILES[$key], 'applications/' . $applicationId);
+        if (!empty($_FILES[$key]['name']) && $_FILES[$key]['error'] === UPLOAD_ERR_OK) {
+            $upload        = read_upload_for_db($_FILES[$key]);
             $encryptedName = encrypt_sensitive($_FILES[$key]['name']);
-            $update->execute([$path, $encryptedName['ciphertext'], $encryptedName['nonce'], (int)$doc['id']]);
+            $update->execute([
+                $upload['file_data'],
+                $upload['file_mime'],
+                $encryptedName['ciphertext'],
+                $encryptedName['nonce'],
+                (int)$doc['id'],
+            ]);
         }
     }
 
-    $missing = db()->prepare('SELECT COUNT(*) FROM requirement_documents WHERE application_id = ? AND file_path IS NULL');
+    // Check if all docs have file_data (or legacy file_path)
+    $missing = db()->prepare(
+        'SELECT COUNT(*) FROM requirement_documents
+         WHERE application_id = ? AND file_data IS NULL AND file_path IS NULL'
+    );
     $missing->execute([$applicationId]);
     if ((int)$missing->fetchColumn() === 0) {
         advance_application($applicationId, 'SUBMITTED', 3);
@@ -46,7 +60,7 @@ $docsStmt->execute([$applicationId]);
 $documents = $docsStmt->fetchAll();
 
 $totalDocs    = count($documents);
-$uploadedDocs = count(array_filter($documents, fn($d) => !empty($d['file_path'])));
+$uploadedDocs = count(array_filter($documents, fn($d) => !empty($d['file_data']) || !empty($d['file_path'])));
 
 require __DIR__ . '/../partials/header.php';
 ?>
@@ -96,8 +110,9 @@ require __DIR__ . '/../partials/header.php';
             </div>
         <?php endif; ?>
 
+        <?php $hasFile = !empty($doc['file_data']) || !empty($doc['file_path']); ?>
         <div
-            class="upload-row <?= $doc['file_path'] ? 'is-uploaded' : '' ?>"
+            class="upload-row <?= $hasFile ? 'is-uploaded' : '' ?>"
             data-upload-row
             data-requirement-key="<?= e($doc['requirement_key']) ?>"
             data-doc-id="<?= (int)$doc['id'] ?>"
@@ -106,8 +121,8 @@ require __DIR__ . '/../partials/header.php';
                 <div class="upload-number"><?= $itemNumber ?></div>
                 <div>
                     <strong><?= e($doc['title']) ?></strong>
-                    <span data-upload-status class="upload-status-text <?= $doc['file_path'] ? 'text-success' : 'text-danger' ?>">
-                        <?= $doc['file_path'] ? '✓ Uploaded' : 'Required' ?>
+                    <span data-upload-status class="upload-status-text <?= $hasFile ? 'text-success' : 'text-danger' ?>">
+                        <?= $hasFile ? '✓ Uploaded' : 'Required' ?>
                     </span>
                 </div>
             </div>
@@ -124,14 +139,14 @@ require __DIR__ . '/../partials/header.php';
                     <span>Choose file</span>
                 </label>
                 <span class="file-name" data-file-name>
-                    <?= $doc['file_path'] ? 'File saved' : 'No file chosen' ?>
+                    <?= $hasFile ? 'File saved' : 'No file chosen' ?>
                 </span>
                 <button
                     type="button"
-                    class="preview-link <?= $doc['file_path'] ? '' : 'is-hidden' ?>"
+                    class="preview-link <?= $hasFile ? '' : 'is-hidden' ?>"
                     data-preview-btn
-                    data-preview-url="<?= $doc['file_path'] ? e('../document_preview.php?id=' . (int)$doc['id']) : '' ?>"
-                    data-preview-type="<?= $doc['file_path'] ? e(strtolower(pathinfo($doc['file_path'], PATHINFO_EXTENSION))) : '' ?>"
+                    data-preview-url="<?= $hasFile ? e('../document_preview.php?id=' . (int)$doc['id']) : '' ?>"
+                    data-preview-type="<?= $hasFile ? e($doc['file_mime'] ?? 'pdf') : '' ?>"
                     aria-label="Preview <?= e($doc['title']) ?>"
                 >Preview</button>
             </div>
@@ -152,13 +167,12 @@ require __DIR__ . '/../partials/header.php';
     </div>
 </form>
 
-
-<?php require __DIR__ . '/../partials/footer.php'; ?>
+<script>
 (function () {
-    var STORAGE_KEY = 'cpdo_upload_drafts_<?= (int)$applicationId ?>';
-    var csrfToken   = <?= json_encode(csrf_token()) ?>;
-    var appId       = <?= (int)$applicationId ?>;
-    var totalDocs   = <?= (int)$totalDocs ?>;
+    var STORAGE_KEY   = 'cpdo_upload_drafts_<?= (int)$applicationId ?>';
+    var csrfToken     = <?= json_encode(csrf_token()) ?>;
+    var appId         = <?= (int)$applicationId ?>;
+    var totalDocs     = <?= (int)$totalDocs ?>;
     var uploadedCount = <?= (int)$uploadedDocs ?>;
 
     function loadDrafts() {
@@ -186,22 +200,6 @@ require __DIR__ . '/../partials/header.php';
             hint.textContent = rem > 0 ? rem + ' document(s) still required.' : 'All documents uploaded — ready to submit.';
         }
     }
-
-    // Restore draft labels on load
-    (function () {
-        var drafts = loadDrafts();
-        Object.keys(drafts).forEach(function (key) {
-            var row = document.querySelector('[data-upload-row][data-requirement-key="' + key + '"]');
-            if (!row) return;
-            var d = drafts[key];
-            if (d && d.fileName) {
-                var fn = row.querySelector('[data-file-name]');
-                var st = row.querySelector('[data-upload-status]');
-                if (fn) fn.textContent = d.fileName + ' (draft)';
-                if (st) { st.textContent = 'Draft'; st.className = 'upload-status-text text-warning'; }
-            }
-        });
-    }());
 
     // Auto-save on file select
     document.querySelectorAll('[data-autosave-file]').forEach(function (input) {
@@ -254,9 +252,6 @@ require __DIR__ . '/../partials/header.php';
         });
     });
 
-    // Preview is handled globally by dlp.js (window.CPDO.preview)
-    // [data-preview-btn] clicks are wired up in dlp.js automatically
-
     // Warn on leave if drafts exist
     window.addEventListener('beforeunload', function (e) {
         if (Object.keys(loadDrafts()).length > 0) {
@@ -269,16 +264,6 @@ require __DIR__ . '/../partials/header.php';
     var form = document.getElementById('upload-form');
     if (form) form.addEventListener('submit', function () {
         try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
-    });
-
-    // Carousel
-    document.querySelectorAll('[data-carousel]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            var id  = btn.dataset.carousel;
-            var el  = document.getElementById(id);
-            var dir = btn.classList.contains('carousel-nav--next') ? 1 : -1;
-            if (el) el.scrollBy({ left: dir * 320, behavior: 'smooth' });
-        });
     });
 }());
 </script>

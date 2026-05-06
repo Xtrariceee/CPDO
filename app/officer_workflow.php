@@ -67,10 +67,11 @@ function create_payment_order_if_missing(array $application, int $userId): array
     }
 
     $opNumber = 'OP-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
-    $stmt = db()->prepare('INSERT INTO payment_orders (application_id, op_number, registry_number) VALUES (?, ?, ?)');
+    $pdo  = db();
+    $stmt = $pdo->prepare('INSERT INTO payment_orders (application_id, op_number, registry_number) VALUES (?, ?, ?)');
     $stmt->execute([(int)$application['id'], $opNumber, $application['registry_number']]);
     advance_application((int)$application['id'], 'PAYMENT_PENDING', 4);
-    audit_log($userId, 'ORDER_OF_PAYMENT_GENERATED', 'payment_orders', (int)db()->lastInsertId(), ['op_number' => $opNumber]);
+    audit_log($userId, 'ORDER_OF_PAYMENT_GENERATED', 'payment_orders', (int)$pdo->lastInsertId(), ['op_number' => $opNumber]);
 
     return payment_order_for_application((int)$application['id']);
 }

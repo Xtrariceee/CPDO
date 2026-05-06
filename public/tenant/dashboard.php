@@ -1,6 +1,50 @@
 <?php
 require_once __DIR__ . '/../../app/bootstrap.php';
 $user = require_role([ROLE_TENANT]);
+verify_csrf();
+
+// Handle upgrade request submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'request_upgrade') {
+    $reason = trim($_POST['reason'] ?? '');
+
+    // Check for existing pending request
+    $existing = db()->prepare(
+        'SELECT id FROM role_upgrade_requests WHERE user_id = ? AND status = "PENDING"'
+    );
+    $existing->execute([(int)$user['id']]);
+
+    if ($existing->fetch()) {
+        $_SESSION['flash_error'] = 'You already have a pending upgrade request. Please wait for admin review.';
+    } else {
+        $pdo  = db();
+        $stmt = $pdo->prepare(
+            'INSERT INTO role_upgrade_requests (user_id, from_role, to_role, reason) VALUES (?, "tenant", "landlord", ?)'
+        );
+        $stmt->execute([(int)$user['id'], $reason ?: null]);
+        $requestId = (int)$pdo->lastInsertId();
+
+        audit_log((int)$user['id'], 'ROLE_UPGRADE_REQUESTED', 'role_upgrade_requests', $requestId, [
+            'from' => 'tenant',
+            'to'   => 'landlord',
+        ]);
+
+        // Notify all admins
+        notify_role(ROLE_SYSTEM_ADMIN, null,
+            'Role Upgrade Request',
+            user_full_name($user) . ' (' . $user['email'] . ') has requested to upgrade from Tenant to Landlord.'
+        );
+
+        $_SESSION['flash_success'] = 'Your upgrade request has been submitted. An admin will review it shortly.';
+    }
+    redirect('tenant/dashboard.php');
+}
+
+// Check for existing upgrade request
+$upgradeRequest = db()->prepare(
+    'SELECT * FROM role_upgrade_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+);
+$upgradeRequest->execute([(int)$user['id']]);
+$upgradeRequest = $upgradeRequest->fetch();
 
 // All active listings
 $stmt = db()->prepare(
@@ -27,7 +71,29 @@ require __DIR__ . '/../partials/header.php';
         <h1 class="h3 mb-1">Welcome, <?= e($user['first_name']) ?></h1>
         <p class="text-secondary mb-0">Browse CPDO-compliant rental properties available in Davao City.</p>
     </div>
+    <div class="d-flex align-items-start">
+        <button class="btn btn-outline-primary btn-sm" data-modal-target="upgrade-modal">
+            Upgrade to Landlord
+        </button>
+    </div>
 </div>
+
+<!-- Upgrade Request Status Banner -->
+<?php if ($upgradeRequest): ?>
+    <?php if ($upgradeRequest['status'] === 'PENDING'): ?>
+        <div class="alert alert-warning mb-4">
+            <strong>Upgrade request pending.</strong> Your request to become a Landlord is under admin review. You'll be notified once a decision is made.
+        </div>
+    <?php elseif ($upgradeRequest['status'] === 'REJECTED'): ?>
+        <div class="alert alert-danger mb-4">
+            <strong>Upgrade request rejected.</strong>
+            <?php if ($upgradeRequest['admin_notes']): ?>
+                Admin note: <?= e($upgradeRequest['admin_notes']) ?>
+            <?php endif; ?>
+            You may submit a new request.
+        </div>
+    <?php endif; ?>
+<?php endif; ?>
 
 <!-- Stats row -->
 <?php if ($totalListings > 0): ?>
@@ -114,15 +180,29 @@ require __DIR__ . '/../partials/header.php';
 </section>
 <?php endif; ?>
 
-<script>
-document.querySelectorAll('[data-carousel]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-        var id  = btn.dataset.carousel;
-        var el  = document.getElementById(id);
-        var dir = btn.classList.contains('carousel-nav--next') ? 1 : -1;
-        if (el) el.scrollBy({ left: dir * 320, behavior: 'smooth' });
-    });
-});
-</script>
+<!-- ── Upgrade to Landlord Modal ── -->
+<div class="modal-backdrop" id="upgrade-modal" role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title">
+    <div class="modal-box" style="max-width:480px;">
+        <div class="modal-header">
+            <h2 class="h5 mb-0" id="upgrade-modal-title">Request Landlord Upgrade</h2>
+            <button class="preview-modal-close" data-modal-close aria-label="Close">&times;</button>
+        </div>
+        <form method="post" class="modal-body">
+            <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="request_upgrade">
+            <p class="text-secondary small mb-3">
+                Submitting this request will notify the admin. They will review your account and change your role to <strong>Landlord</strong> if approved. You do not need to create a new account.
+            </p>
+            <div class="mb-3">
+                <label class="form-label">Reason <span class="text-secondary">(optional)</span></label>
+                <textarea class="form-control" name="reason" rows="3" placeholder="Briefly explain why you'd like to become a landlord…"></textarea>
+            </div>
+            <div class="d-flex gap-2 justify-content-end">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-modal-close>Cancel</button>
+                <button type="submit" class="btn btn-primary btn-sm">Submit Request</button>
+            </div>
+        </form>
+    </div>
+</div>
 
 <?php require __DIR__ . '/../partials/footer.php'; ?>

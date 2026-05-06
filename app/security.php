@@ -116,6 +116,39 @@ function secure_upload(array $file, string $directory, array $allowedExtensions 
     return 'storage/uploads/' . trim($directory, '/') . '/' . $filename;
 }
 
+/**
+ * Read an uploaded file's binary content for DB storage.
+ * Returns ['file_data' => binary string, 'file_mime' => MIME type string].
+ */
+function read_upload_for_db(array $file, array $allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png']): array
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('Upload failed (error code ' . ($file['error'] ?? 'none') . ').');
+    }
+
+    $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($extension, $allowedExtensions, true)) {
+        throw new RuntimeException('Only PDF, JPG, JPEG, and PNG files are allowed.');
+    }
+
+    $mimeMap = [
+        'pdf'  => 'application/pdf',
+        'jpg'  => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'png'  => 'image/png',
+    ];
+
+    $data = file_get_contents($file['tmp_name']);
+    if ($data === false) {
+        throw new RuntimeException('Unable to read uploaded file.');
+    }
+
+    return [
+        'file_data' => $data,
+        'file_mime' => $mimeMap[$extension] ?? 'application/octet-stream',
+    ];
+}
+
 function redirect(string $path): void
 {
     global $config;

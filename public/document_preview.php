@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/../app/bootstrap.php';
 
-$user = require_login();
+$user       = require_login();
 $documentId = (int)($_GET['id'] ?? 0);
 
 $stmt = db()->prepare(
@@ -13,7 +13,7 @@ $stmt = db()->prepare(
 $stmt->execute([$documentId]);
 $document = $stmt->fetch();
 
-if (!$document || !$document['file_path']) {
+if (!$document) {
     http_response_code(404);
     exit('Document not found.');
 }
@@ -26,15 +26,31 @@ if (!$allowed) {
     exit('Access denied.');
 }
 
-$path = realpath(__DIR__ . '/../' . $document['file_path']);
-$storageRoot = realpath(__DIR__ . '/../storage/uploads');
-if (!$path || !$storageRoot || !str_starts_with($path, $storageRoot)) {
-    http_response_code(404);
-    exit('Document not found.');
+// Serve from DB (preferred)
+if (!empty($document['file_data'])) {
+    $mime = $document['file_mime'] ?: 'application/octet-stream';
+    header('Content-Type: ' . $mime);
+    header('Content-Disposition: inline; filename="document-preview"');
+    header('X-Content-Type-Options: nosniff');
+    echo $document['file_data'];
+    exit;
 }
 
-$mime = mime_content_type($path) ?: 'application/octet-stream';
-header('Content-Type: ' . $mime);
-header('Content-Disposition: inline; filename="document-preview"');
-header('X-Content-Type-Options: nosniff');
-readfile($path);
+// Fallback: serve from filesystem (legacy)
+if (!empty($document['file_path'])) {
+    $path        = realpath(__DIR__ . '/../' . $document['file_path']);
+    $storageRoot = realpath(__DIR__ . '/../storage/uploads');
+    if (!$path || !$storageRoot || !str_starts_with($path, $storageRoot)) {
+        http_response_code(404);
+        exit('Document not found.');
+    }
+    $mime = mime_content_type($path) ?: 'application/octet-stream';
+    header('Content-Type: ' . $mime);
+    header('Content-Disposition: inline; filename="document-preview"');
+    header('X-Content-Type-Options: nosniff');
+    readfile($path);
+    exit;
+}
+
+http_response_code(404);
+exit('Document not found.');

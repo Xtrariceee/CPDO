@@ -19,12 +19,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('landlord/skip-compliance.php');
     }
 
-    $stmt = db()->prepare(
+    $pdo  = db();
+    $stmt = $pdo->prepare(
         'INSERT INTO compliance_uploads (landlord_id, property_title, approved_resolution_path, zoning_clearance_path, proof_of_ownership_path)
          VALUES (?, ?, ?, ?, ?)'
     );
     $stmt->execute([(int)$user['id'], $propertyTitle, $resolution, $zoning, $ownership]);
-    audit_log((int)$user['id'], 'SKIP_COMPLIANCE_SUBMITTED', 'compliance_uploads', (int)db()->lastInsertId());
+    audit_log((int)$user['id'], 'SKIP_COMPLIANCE_SUBMITTED', 'compliance_uploads', (int)$pdo->lastInsertId());
     $_SESSION['flash_success'] = 'Documents submitted. An Administrative Officer will verify them shortly.';
     redirect('landlord/dashboard.php');
 }

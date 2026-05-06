@@ -42,26 +42,22 @@ return [
         'encryption_key_hex' => 'replace_with_64_hex_characters',
     ],
     'google' => [
-        'client_id'    => '',
-        'client_secret' => '',
+        'client_id'    => '640635980823-n8lmkqljuh282hmq4mhl4g17co5sibje.apps.googleusercontent.com',
+        'client_secret' => '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',
         'redirect_uri' => 'http://localhost/LandReclassification/public/oauth_google_callback.php',
     ],
     'paymongo' => [
-        'secret_key'     => '',
-        'public_key'     => '',
+        'secret_key'     => 'sk_test_YjHXCUyRDnj7jw1EvM658CG7',
+        'public_key'     => 'pk_test_isnEVCDvz1x8GP9Z95TX94Gq',
         'webhook_secret' => '',
     ],
     'mail' => [
-        /*
-         * Set 'host' to your SMTP server address.
-         * Leave empty to fall back to PHP mail() (local MTA required).
-         */
-        'host'       => '',
+        'host'       => 'smtp.gmail.com',
         'port'       => 587,
-        'username'   => '',
-        'password'   => '',
-        'encryption' => 'tls',   // 'tls' (STARTTLS on port 587) or 'ssl' (port 465)
-        'from_email' => 'no-reply@localhost.test',
-        'from_name'  => 'CPDO Land Portal',
+        'encryption' => 'tls',
+        'username'   => 'rhaizanicolerenigen@gmail.com',   // ← REPLACE with your Gmail address
+        'password'   => 'ezhb drrz fgzx iuir', // ← REPLACE with 16-char App Password
+        'from_email' => 'rhaizanicolerenigen@gmail.com',   // ← REPLACE with same Gmail address
+        'from_name'  => 'RentEase-CPDO',
     ],
 ];
