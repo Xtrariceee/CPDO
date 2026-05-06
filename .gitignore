@@ -3,6 +3,7 @@ config/env.php
 
 # ── Composer dependencies ──────────────────────────────────────
 /vendor/
+/PHPMailer-master/
 
 # ── Uploaded files (keep folder, ignore contents) ─────────────
 /storage/uploads/*
