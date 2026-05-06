@@ -46,16 +46,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $_SESSION['flash_success'] = 'User updated.';
     }
 
-    if ($action === 'delete' && $userId > 0 && $userId !== (int)$user['id']) {
-        try {
-            db()->prepare('DELETE FROM users WHERE id = ?')->execute([$userId]);
-            audit_log((int)$user['id'], 'ADMIN_USER_DELETED', 'users', $userId);
-            $_SESSION['flash_success'] = 'User deleted.';
-        } catch (PDOException $exception) {
-            db()->prepare('UPDATE users SET status = "DISABLED" WHERE id = ?')->execute([$userId]);
-            audit_log((int)$user['id'], 'ADMIN_USER_LOCKED_DUE_TO_LINKED_RECORDS', 'users', $userId);
-            $_SESSION['flash_success'] = 'User has linked records — account locked instead of removed.';
-        }
+    if ($action === 'disable' && $userId > 0 && $userId !== (int)$user['id']) {
+        db()->prepare('UPDATE users SET status = "DISABLED" WHERE id = ?')->execute([$userId]);
+        audit_log((int)$user['id'], 'ADMIN_USER_DISABLED', 'users', $userId);
+        $_SESSION['flash_success'] = 'Account disabled.';
+    }
+
+    if ($action === 'enable' && $userId > 0) {
+        db()->prepare('UPDATE users SET status = "ACTIVE" WHERE id = ?')->execute([$userId]);
+        audit_log((int)$user['id'], 'ADMIN_USER_ENABLED', 'users', $userId);
+        $_SESSION['flash_success'] = 'Account re-enabled.';
     }
 
     // Handle role upgrade request review
@@ -102,7 +102,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('admin/users/');
 }
 
-$users = db()->query('SELECT * FROM users ORDER BY role, last_name, first_name')->fetchAll();
+// Active users first (sorted by role then name), disabled users at the bottom
+$users = db()->query(
+    'SELECT * FROM users
+     ORDER BY
+       CASE status WHEN "ACTIVE" THEN 0 ELSE 1 END,
+       role,
+       last_name,
+       first_name'
+)->fetchAll();
 
 // Pending upgrade requests
 $pendingUpgrades = db()->query(
@@ -237,7 +245,321 @@ require __DIR__ . '/../../partials/header.php';
                         </tr>
                     </thead>
                     <tbody>
-                    <?php foreach ($users as $row): ?>
+                    <?php
+                    $shownDisabledHeader = false;
+                    foreach ($users as $row):
+                        // Insert a visual divider before the first DISABLED user
+                        if (!$shownDisabledHeader && $row['status'] === 'DISABLED'):
+                            $shownDisabledHeader = true;
+                    ?>
+                        <tr>
+                            <td colspan="7" class="py-2 px-3"
+                                style="background:#f8f0f0;border-top:2px solid #f5c6c6;">
+                                <span style="font-size:var(--text-xs);font-weight:800;
+                                             text-transform:uppercase;letter-spacing:.07em;
+                                             color:#c0392b;">
+                                    ⬇ Disabled Accounts
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                        <tr <?= $row['status'] === 'DISABLED' ? 'style="opacity:.65;"' : '' ?>>
+                            <form method="post">
+                                <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                                <input type="hidden" name="user_id" value="<?= (int)$row['id'] ?>">
+                                <td>
+                                    <input class="form-control form-control-sm" name="first_name"
+                                           value="<?= e($row['first_name']) ?>" style="min-width:100px;">
+                                </td>
+                                <td>
+                                    <input class="form-control form-control-sm" name="middle_name"
+                                           value="<?= e($row['middle_name']) ?>" style="min-width:100px;">
+                                </td>
+                                <td>
+                                    <input class="form-control form-control-sm" name="last_name"
+                                           value="<?= e($row['last_name']) ?>" style="min-width:100px;">
+                                </td>
+                                <td>
+                                    <input class="form-control form-control-sm" name="email" type="email"
+                                           value="<?= e($row['email']) ?>" style="min-width:170px;">
+                                </td>
+                                <td>
+                                    <select class="form-select form-select-sm" name="role" style="min-width:150px;">
+                                        <?php foreach ($roles as $role): ?>
+                                            <option value="<?= e($role) ?>" <?= $row['role'] === $role ? 'selected' : '' ?>>
+                                                <?= e(role_label($role)) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </td>
+                                <td>
+                                    <?php if ($row['status'] === 'ACTIVE'): ?>
+                                        <span class="badge text-bg-success">Active</span>
+                                    <?php else: ?>
+                                        <span class="badge text-bg-secondary">Disabled</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-sm btn-primary" name="action" value="update">Save</button>
+                                        <?php if ((int)$row['id'] !== (int)$user['id']): ?>
+                                            <?php if ($row['status'] === 'ACTIVE'): ?>
+                                                <button class="btn btn-sm btn-outline-warning" name="action" value="disable"
+                                                        onclick="return confirm('Disable this account? The user will not be able to log in.')">
+                                                    Disable
+                                                </button>
+                                            <?php else: ?>
+                                                <button class="btn btn-sm btn-outline-success" name="action" value="enable">
+                                                    Re-enable
+                                                </button>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
+                            </form>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     Review modals — rendered OUTSIDE the table so position:fixed works
+     ══════════════════════════════════════════════════════════ -->
+<?php foreach ($pendingUpgrades as $req): ?>
+<div class="modal-backdrop" id="upgrade-modal-<?= (int)$req['id'] ?>"
+     role="dialog" aria-modal="true"
+     aria-labelledby="upgrade-modal-title-<?= (int)$req['id'] ?>">
+    <div class="modal-box" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="h6 mb-0" id="upgrade-modal-title-<?= (int)$req['id'] ?>">
+                Review Upgrade Request
+            </h3>
+            <button class="preview-modal-close" data-modal-close aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="d-flex align-items-start gap-3 mb-4 p-3"
+                 style="background:#f8fbff;border-radius:var(--radius-md);border:1px solid var(--cpdo-border);">
+                <div style="width:40px;height:40px;border-radius:50%;background:var(--cpdo-navy);
+                            color:#fff;display:flex;align-items:center;justify-content:center;
+                            font-weight:900;font-size:.9rem;flex-shrink:0;">
+                    <?= mb_strtoupper(mb_substr($req['full_name'], 0, 1)) ?>
+                </div>
+                <div>
+                    <div class="fw-bold"><?= e($req['full_name']) ?></div>
+                    <div class="small text-secondary"><?= e($req['email']) ?></div>
+                    <div class="mt-1">
+                        <span class="status-pill"><?= e(role_label($req['from_role'])) ?></span>
+                        <span class="mx-1 text-secondary">→</span>
+                        <span class="status-pill status-approved"><?= e(role_label($req['to_role'])) ?></span>
+                    </div>
+                </div>
+            </div>
+
+            <?php if ($req['reason']): ?>
+            <div class="mb-3">
+                <div class="form-label mb-1">Reason from user</div>
+                <div class="p-3" style="background:#fffbeb;border-radius:var(--radius-sm);
+                                        border-left:3px solid var(--cpdo-amber);font-size:var(--text-sm);">
+                    <?= e($req['reason']) ?>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <div class="mb-4">
+                <label class="form-label" for="admin-notes-<?= (int)$req['id'] ?>">
+                    Admin Notes <span class="text-secondary fw-normal">(optional — sent to user)</span>
+                </label>
+                <textarea class="form-control" id="admin-notes-<?= (int)$req['id'] ?>"
+                          rows="2" placeholder="Reason for approval or rejection…"></textarea>
+            </div>
+
+            <div class="d-flex gap-2 justify-content-end">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-modal-close>Cancel</button>
+                <form method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="action" value="reject_upgrade">
+                    <input type="hidden" name="request_id" value="<?= (int)$req['id'] ?>">
+                    <input type="hidden" name="admin_notes" id="reject-notes-<?= (int)$req['id'] ?>">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                            onclick="syncNotes(<?= (int)$req['id'] ?>)">Reject</button>
+                </form>
+                <form method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="action" value="approve_upgrade">
+                    <input type="hidden" name="request_id" value="<?= (int)$req['id'] ?>">
+                    <input type="hidden" name="admin_notes" id="approve-notes-<?= (int)$req['id'] ?>">
+                    <button type="submit" class="btn btn-sm btn-success"
+                            onclick="syncNotes(<?= (int)$req['id'] ?>)">Approve</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endforeach; ?>
+
+<script>
+function syncNotes(id) {
+    var val = (document.getElementById('admin-notes-' + id) || {}).value || '';
+    var rn  = document.getElementById('reject-notes-'  + id);
+    var an  = document.getElementById('approve-notes-' + id);
+    if (rn) rn.value = val;
+    if (an) an.value = val;
+}
+</script>
+
+<?php require __DIR__ . '/../../partials/footer.php'; ?>
+        <!-- ── Pending Upgrade Requests ── -->
+        <?php if ($pendingUpgrades): ?>
+        <div class="gov-card p-4 mb-4">
+            <h2 class="h5 mb-3 d-flex align-items-center gap-2">
+                Role Upgrade Requests
+                <span class="badge text-bg-warning"><?= count($pendingUpgrades) ?> pending</span>
+            </h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Email</th>
+                            <th>From → To</th>
+                            <th>Reason</th>
+                            <th>Requested</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($pendingUpgrades as $req): ?>
+                        <tr>
+                            <td class="fw-semibold"><?= e($req['full_name']) ?></td>
+                            <td><?= e($req['email']) ?></td>
+                            <td>
+                                <span class="status-pill"><?= e(role_label($req['from_role'])) ?></span>
+                                → <span class="status-pill status-approved"><?= e(role_label($req['to_role'])) ?></span>
+                            </td>
+                            <td class="text-secondary small" style="max-width:200px;">
+                                <?= $req['reason'] ? e($req['reason']) : '<em>No reason given</em>' ?>
+                            </td>
+                            <td class="text-secondary small"><?= e($req['created_at']) ?></td>
+                            <td>
+                                <button type="button" class="btn btn-sm btn-success"
+                                        data-modal-target="upgrade-modal-<?= (int)$req['id'] ?>">
+                                    Review
+                                </button>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- ── Create User ── -->
+        <div class="gov-card p-4 mb-4">
+            <h2 class="h5 mb-3">Add New User</h2>
+            <form method="post">
+                <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action" value="create">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-2">
+                        <label class="form-label">First Name</label>
+                        <input class="form-control" name="first_name" required placeholder="First">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Middle Name</label>
+                        <input class="form-control" name="middle_name" placeholder="Middle">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Last Name</label>
+                        <input class="form-control" name="last_name" required placeholder="Last">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Email</label>
+                        <input class="form-control" type="email" name="email" required placeholder="email@example.com">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Password</label>
+                        <input class="form-control" name="password" value="12345678" required>
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label">Role</label>
+                        <select class="form-select" name="role">
+                            <?php foreach ($roles as $role): ?>
+                                <option value="<?= e($role) ?>"><?= e(role_label($role)) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" name="status">
+                            <option>ACTIVE</option>
+                            <option>DISABLED</option>
+                        </select>
+                    </div>
+                    <div class="col-md-auto">
+                        <button class="btn btn-primary">Add User</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- ── User List ── -->
+        <div class="gov-card p-4">
+            <h2 class="h5 mb-3">All Users</h2>
+            <div class="table-responsive">
+                <table class="table align-middle" style="min-width:900px;">
+                    <thead>
+                        <tr>
+                            <th style="min-width:110px;">First Name</th>
+                            <th style="min-width:110px;">Middle Name</th>
+                            <th style="min-width:110px;">Last Name</th>
+                            <th style="min-width:180px;">Email</th>
+                            <th style="min-width:160px;">Role</th>
+                            <th style="min-width:120px;">Status</th>
+                            <th style="min-width:130px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php
+                    $shownDisabledHeader = false;
+                    foreach ($users as $row):
+                        // Insert a visual divider before the first DISABLED user
+                        if (!$shownDisabledHeader && $row['status'] === 'DISABLED'):
+                            $shownDisabledHeader = true;
+                    ?>
+                        <tr>
+                            <td colspan="7" class="py-2 px-3"
+                                style="background:#f8f0f0;border-top:2px solid #f5c6c6;">
+                                <span style="font-size:var(--text-xs);font-weight:800;
+                                             text-transform:uppercase;letter-spacing:.07em;
+                                             color:#c0392b;">
+                                    ⬇ Disabled Accounts
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                    <?php endforeach; ?>
+                    <?php
+                    $shownDisabledHeader = false;
+                    foreach ($users as $row):
+                        if (!$shownDisabledHeader && $row['status'] === 'DISABLED'):
+                            $shownDisabledHeader = true;
+                    ?>
+                        <tr>
+                            <td colspan="7" class="py-2 px-3"
+                                style="background:#f8f0f0;border-top:2px solid #f5c6c6;">
+                                <span style="font-size:var(--text-xs);font-weight:800;
+                                             text-transform:uppercase;letter-spacing:.07em;
+                                             color:#c0392b;">
+                                    ⬇ Disabled Accounts
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
                         <tr>
                             <form method="post">
                                 <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
@@ -277,8 +599,16 @@ require __DIR__ . '/../../partials/header.php';
                                     <div class="d-flex gap-2">
                                         <button class="btn btn-sm btn-primary" name="action" value="update">Save</button>
                                         <?php if ((int)$row['id'] !== (int)$user['id']): ?>
-                                            <button class="btn btn-sm btn-outline-danger" name="action" value="delete"
-                                                    onclick="return confirm('Delete this user?')">Delete</button>
+                                            <?php if ($row['status'] === 'ACTIVE'): ?>
+                                                <button class="btn btn-sm btn-outline-warning" name="action" value="disable"
+                                                        onclick="return confirm('Disable this account? The user will not be able to log in.')">
+                                                    Disable
+                                                </button>
+                                            <?php else: ?>
+                                                <button class="btn btn-sm btn-outline-success" name="action" value="enable">
+                                                    Re-enable
+                                                </button>
+                                            <?php endif; ?>
                                         <?php endif; ?>
                                     </div>
                                 </td>

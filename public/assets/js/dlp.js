@@ -110,8 +110,10 @@
         // Clear body, show loading
         bodyEl.innerHTML = '<div class="preview-modal-loading" id="pm-loading">Loading…</div>';
 
-        var ext = (type || '').toLowerCase().replace('.', '');
-        var isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext);
+        // Accept both MIME types (image/jpeg, application/pdf) and extensions (jpg, pdf)
+        var t = (type || '').toLowerCase();
+        var isImage = t.startsWith('image/')
+            || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(t.replace('.', ''));
 
         if (isImage) {
             var img = document.createElement('img');

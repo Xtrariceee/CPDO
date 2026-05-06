@@ -49,7 +49,8 @@ try {
     echo json_encode([
         'ok'          => true,
         'message'     => 'File saved.',
-        'preview_url' => '../document_preview.php?id=' . (int)$document['id'],
+        'preview_url' => rtrim($config['app']['base_url'], '/') . '/document_preview.php?id=' . (int)$document['id'],
+        'file_mime'   => $upload['file_mime'],
     ]);
 } catch (Throwable $exception) {
     http_response_code(400);

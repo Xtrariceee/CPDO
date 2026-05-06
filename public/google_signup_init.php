@@ -1,26 +1,19 @@
 <?php
 /**
- * Stores the selected role in session and redirects to Google OAuth.
- * Called from the register page when user clicks "Sign up with Google".
+ * Stores the Tenant role in session and redirects to Google OAuth.
+ * All Google sign-ups create a Tenant account by default.
+ * Users can request an upgrade to Landlord from their dashboard.
  */
 require_once __DIR__ . '/../app/bootstrap.php';
 verify_csrf();
-
-$role             = $_POST['role'] ?? '';
-$allowedSelfRoles = [ROLE_LANDLORD, ROLE_TENANT];
-
-if (!in_array($role, $allowedSelfRoles, true)) {
-    $_SESSION['flash_error'] = 'Invalid account type selected.';
-    redirect('register.php');
-}
 
 if (empty($config['google']['client_id'])) {
     $_SESSION['flash_error'] = 'Google OAuth is not configured.';
     redirect('register.php');
 }
 
-// Store role in session so the callback knows this is a sign-up
-$_SESSION['google_signup_role'] = $role;
+// All self-registered accounts start as Tenant
+$_SESSION['google_signup_role'] = ROLE_TENANT;
 
 $params = http_build_query([
     'client_id'     => $config['google']['client_id'],

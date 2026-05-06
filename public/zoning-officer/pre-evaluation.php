@@ -166,14 +166,15 @@ require __DIR__ . '/../partials/header.php';
                         <div>
                             <div class="eval-doc-title"><?= e($doc['title']) ?></div>
                             <div class="eval-doc-meta">
-                                <?php if ($doc['file_path']): ?>
+                                <?php $hasFile = !empty($doc['file_data']) || !empty($doc['file_path']); ?>
+                                <?php if ($hasFile): ?>
                                     <span class="badge text-bg-success me-1">Uploaded</span>
                                     <button
                                         type="button"
                                         class="preview-link"
                                         data-preview-btn
-                                        data-preview-url="<?= e('../document_preview.php?id=' . (int)$doc['id']) ?>"
-                                        data-preview-type="<?= e(strtolower(pathinfo($doc['file_path'], PATHINFO_EXTENSION))) ?>"
+                                        data-preview-url="<?= e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?id=' . (int)$doc['id']) ?>"
+                                        data-preview-type="<?= e($doc['file_mime'] ?? 'application/pdf') ?>"
                                         data-preview-title="<?= e($doc['title']) ?>"
                                         data-preview-meta="<?= e($doc['group_name']) ?>"
                                     >Preview Document</button>

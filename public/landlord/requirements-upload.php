@@ -145,8 +145,8 @@ require __DIR__ . '/../partials/header.php';
                     type="button"
                     class="preview-link <?= $hasFile ? '' : 'is-hidden' ?>"
                     data-preview-btn
-                    data-preview-url="<?= $hasFile ? e('../document_preview.php?id=' . (int)$doc['id']) : '' ?>"
-                    data-preview-type="<?= $hasFile ? e($doc['file_mime'] ?? 'pdf') : '' ?>"
+                    data-preview-url="<?= $hasFile ? e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?id=' . (int)$doc['id']) : '' ?>"
+                    data-preview-type="<?= $hasFile ? e($doc['file_mime'] ?? 'application/pdf') : '' ?>"
                     aria-label="Preview <?= e($doc['title']) ?>"
                 >Preview</button>
             </div>
@@ -236,7 +236,7 @@ require __DIR__ . '/../partials/header.php';
                     if (!p.ok) throw new Error(p.message || 'Upload failed.');
                     if (previewBtn) {
                         previewBtn.dataset.previewUrl  = p.preview_url;
-                        previewBtn.dataset.previewType = file.name.split('.').pop().toLowerCase();
+                        previewBtn.dataset.previewType = p.file_mime || file.name.split('.').pop().toLowerCase();
                     }
                     statusEl.textContent = '✓ Uploaded';
                     statusEl.className   = 'upload-status-text text-success';
