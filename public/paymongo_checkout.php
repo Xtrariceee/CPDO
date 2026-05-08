@@ -17,8 +17,7 @@ if (!$order) {
 
 if (empty($config['paymongo']['secret_key'])) {
     $receipt = 'RCPT-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
-    $update = db()->prepare('UPDATE payment_orders SET status = "PAID", receipt_number = ?, paid_at = NOW() WHERE id = ?');
-    $update->execute([$receipt, $orderId]);
+    mark_payment_order_paid($orderId, $receipt, 'Demo Payment');
     advance_application((int)$order['application_id'], 'PAID', 6);
     audit_log((int)$user['id'], 'PAYMENT_SIMULATED', 'payment_orders', $orderId, ['receipt_number' => $receipt]);
     $_SESSION['flash_success'] = 'Demo payment completed and digital receipt generated: ' . $receipt;
@@ -31,7 +30,7 @@ $payload = [
             'line_items' => [[
                 'currency' => 'PHP',
                 'amount' => (int)((float)$order['service_fee'] * 100),
-                'name' => 'CPDO Land Reclassification Service Fee',
+                'name' => $order['payment_for'] ?? default_payment_for($order),
                 'quantity' => 1,
             ]],
             'payment_method_types' => ['gcash', 'paymaya', 'card'],

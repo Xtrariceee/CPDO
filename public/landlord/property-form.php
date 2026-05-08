@@ -61,7 +61,7 @@ require __DIR__ . '/../partials/header.php';
 ?>
 
 <div class="d-flex align-items-center gap-3 mb-4">
-    <a class="btn btn-outline-secondary btn-sm" href="dashboard.php">← Dashboard</a>
+    <a class="btn btn-back btn-sm" href="dashboard.php"><span aria-hidden="true">&larr;</span> Dashboard</a>
     <h1 class="h3 mb-0"><?= $property ? 'Edit Property Listing' : 'Create Property Listing' ?></h1>
 </div>
 

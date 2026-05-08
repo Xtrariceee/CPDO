@@ -34,7 +34,7 @@ require __DIR__ . '/../partials/header.php';
 ?>
 
 <div class="d-flex align-items-center gap-3 mb-4">
-    <a class="btn btn-outline-secondary btn-sm" href="compliance-gateway.php">← Back</a>
+    <a class="btn btn-back btn-sm" href="compliance-gateway.php"><span aria-hidden="true">&larr;</span> Back</a>
     <div>
         <p class="eyebrow mb-0">Option B</p>
         <h1 class="h3 mb-0">Upload Compliance Documents</h1>
@@ -187,7 +187,7 @@ require __DIR__ . '/../partials/header.php';
             var previewBtn = row.querySelector('[data-preview-btn]');
 
             fileNameEl.textContent = file.name;
-            statusEl.textContent   = '✓ Selected';
+            statusEl.textContent   = 'Selected';
             statusEl.className     = 'upload-status-text text-success';
 
             if (previewBtn) {

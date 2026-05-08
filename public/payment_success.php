@@ -16,8 +16,7 @@ if (!$order) {
 }
 
 $receipt = 'RCPT-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
-$update = db()->prepare('UPDATE payment_orders SET status = "PAID", receipt_number = ?, paid_at = NOW() WHERE id = ?');
-$update->execute([$receipt, $orderId]);
+mark_payment_order_paid($orderId, $receipt, 'PayMongo');
 advance_application((int)$order['application_id'], 'PAID', 6);
 audit_log((int)$user['id'], 'PAYMENT_SUCCESS', 'payment_orders', $orderId, ['receipt_number' => $receipt]);
 

@@ -11,7 +11,7 @@ require __DIR__ . '/../partials/header.php';
 ?>
 
 <div class="d-flex align-items-center gap-3 mb-4">
-    <a class="btn btn-outline-secondary btn-sm" href="dashboard.php">← Dashboard</a>
+    <a class="btn btn-back btn-sm" href="dashboard.php"><span aria-hidden="true">&larr;</span> Dashboard</a>
     <div>
         <p class="eyebrow mb-0">Compliance Gateway</p>
         <h1 class="h3 mb-0">Add a Property Listing</h1>

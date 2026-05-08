@@ -54,15 +54,14 @@ if ($application) {
 $totalDocs  = count($documents);
 $passedDocs = count(array_filter($documents, fn($d) => $d['evaluation_status'] === 'PASSED'));
 $failedDocs = count(array_filter($documents, fn($d) => $d['evaluation_status'] === 'FAILED'));
-$uploadedDocs = count(array_filter($documents, fn($d) => !empty($d['file_path'])));
+$uploadedDocs = count(array_filter($documents, fn($d) => !empty($d['file_data']) || !empty($d['file_path'])));
 
 require __DIR__ . '/../partials/header.php';
 ?>
 
 <div class="d-flex align-items-center gap-3 mb-4">
-    <a class="btn btn-outline-secondary btn-sm" href="index.php">← Dashboard</a>
+    <a class="btn btn-back btn-sm" href="index.php"><span aria-hidden="true">&larr;</span> Dashboard</a>
     <div>
-        <p class="eyebrow mb-0">Process 3</p>
         <h1 class="h3 mb-0">Pre-Evaluation</h1>
     </div>
 </div>
@@ -142,11 +141,11 @@ require __DIR__ . '/../partials/header.php';
 
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h3 class="h6 mb-0">Document Evaluation</h3>
-                    <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="mark-all-pass">
-                            ✓ Pass All
+                    <div class="eval-actions">
+                        <button type="button" class="eval-bulk-btn eval-bulk-btn--pass" id="mark-all-pass">
+                            Pass All
                         </button>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="mark-all-pending">
+                        <button type="button" class="eval-bulk-btn eval-bulk-btn--reset" id="mark-all-pending">
                             Reset All
                         </button>
                     </div>
@@ -204,9 +203,9 @@ require __DIR__ . '/../partials/header.php';
                                 name="doc_<?= (int)$doc['id'] ?>"
                                 data-eval-select
                             >
-                                <option value="PENDING" <?= $doc['evaluation_status'] === 'PENDING' ? 'selected' : '' ?>>⏳ Pending</option>
-                                <option value="PASSED"  <?= $doc['evaluation_status'] === 'PASSED'  ? 'selected' : '' ?>>✓ Pass</option>
-                                <option value="FAILED"  <?= $doc['evaluation_status'] === 'FAILED'  ? 'selected' : '' ?>>✗ Fail</option>
+                                <option value="PENDING" <?= $doc['evaluation_status'] === 'PENDING' ? 'selected' : '' ?>>Pending</option>
+                                <option value="PASSED"  <?= $doc['evaluation_status'] === 'PASSED'  ? 'selected' : '' ?>>Pass</option>
+                                <option value="FAILED"  <?= $doc['evaluation_status'] === 'FAILED'  ? 'selected' : '' ?>>Fail</option>
                             </select>
                         </div>
                     </div>
@@ -216,7 +215,7 @@ require __DIR__ . '/../partials/header.php';
                     <button class="btn btn-primary" type="submit">Save Evaluation Results</button>
                     <span class="text-secondary small">
                         <?php if ($passedDocs === $totalDocs && $totalDocs > 0): ?>
-                            All documents passed — saving will generate an Order of Payment.
+                            All documents passed - saving will generate an Order of Payment.
                         <?php else: ?>
                             <?= $totalDocs - $passedDocs ?> document(s) not yet passed.
                         <?php endif; ?>
@@ -227,7 +226,7 @@ require __DIR__ . '/../partials/header.php';
         <?php else: ?>
             <div class="gov-card p-5">
                 <div class="empty-state">
-                    <div class="empty-state-icon">📋</div>
+                    <div class="empty-state-icon">DOC</div>
                     <h3>No applications to evaluate</h3>
                     <p>Submitted applications will appear here once landlords complete their document uploads.</p>
                 </div>

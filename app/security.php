@@ -152,6 +152,29 @@ function read_upload_for_db(array $file, array $allowedExtensions = ['pdf', 'jpg
 function redirect(string $path): void
 {
     global $config;
-    header('Location: ' . rtrim($config['app']['base_url'], '/') . '/' . ltrim($path, '/'));
+    // If path is already an absolute URL, use it directly
+    if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+        header('Location: ' . $path);
+        exit;
+    }
+    // CPDO portal pages set $GLOBALS['_cpdo_portal'] = true in bootstrap_cpdo.php
+    if (!empty($GLOBALS['_cpdo_portal'])) {
+        $base = $config['app']['cpdo_url'] ?? str_replace('/public', '/cpdo', rtrim($config['app']['base_url'], '/'));
+    } else {
+        $base = $config['app']['base_url'];
+    }
+    header('Location: ' . rtrim($base, '/') . '/' . ltrim($path, '/'));
+    exit;
+}
+
+/**
+ * Redirect to a path relative to the CPDO portal base URL.
+ * Use this explicitly in CPDO pages regardless of portal flag.
+ */
+function redirect_cpdo(string $path): void
+{
+    global $config;
+    $base = $config['app']['cpdo_url'] ?? str_replace('/public', '/cpdo', rtrim($config['app']['base_url'], '/'));
+    header('Location: ' . rtrim($base, '/') . '/' . ltrim($path, '/'));
     exit;
 }

@@ -28,10 +28,12 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/security.php';
+require_once __DIR__ . '/branding.php';
 require_once __DIR__ . '/rbac.php';
 require_once __DIR__ . '/audit.php';
 require_once __DIR__ . '/workflow.php';
 require_once __DIR__ . '/officer_workflow.php';
 require_once __DIR__ . '/mailer.php';
+require_once __DIR__ . '/vicinity_map_pdf.php';
 
 enforce_session_timeout((int)$config['app']['session_timeout_seconds']);

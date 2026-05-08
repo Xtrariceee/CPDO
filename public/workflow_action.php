@@ -31,10 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $failed = db()->prepare('SELECT COUNT(*) FROM requirement_documents WHERE application_id = ? AND evaluation_status != "PASSED"');
         $failed->execute([$applicationId]);
         if ((int)$failed->fetchColumn() === 0) {
-            $opNumber = 'OP-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
-            $pay = db()->prepare('INSERT INTO payment_orders (application_id, op_number, registry_number) VALUES (?, ?, ?)');
-            $pay->execute([$applicationId, $opNumber, $application['registry_number']]);
-            advance_application($applicationId, 'PAYMENT_PENDING', 4);
+            create_payment_order_if_missing($application, (int)$user['id']);
         } else {
             advance_application($applicationId, 'PRE_EVALUATION', 3);
         }
@@ -43,9 +40,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'verify_payment' && in_array($user['role'], [ROLE_ZONING, ROLE_ADMIN_OFFICER, ROLE_SYSTEM_ADMIN], true)) {
-        $scheduledAt = trim($_POST['scheduled_at'] ?? '');
-        $insert = db()->prepare('INSERT INTO inspections (application_id, scheduled_at, assigned_by) VALUES (?, ?, ?)');
-        $insert->execute([$applicationId, $scheduledAt ?: null, (int)$user['id']]);
+        try {
+            $scheduledAt = schedule_inspection_for_application(
+                $applicationId,
+                trim($_POST['inspection_date'] ?? ''),
+                trim($_POST['inspection_time'] ?? ''),
+                (int)$user['id']
+            );
+        } catch (RuntimeException $exception) {
+            $_SESSION['flash_error'] = $exception->getMessage();
+            redirect('workflow_action.php?id=' . $applicationId);
+        }
         advance_application($applicationId, 'INSPECTION_SCHEDULED', 7);
         notify_user((int)$application['landlord_id'], $applicationId, 'Inspection scheduled', 'Your CPDO inspection has been scheduled.');
         notify_role(ROLE_TWG, $applicationId, 'New inspection assignment', 'A CPDO inspection is ready for TWG field validation.');
@@ -87,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             advance_application($applicationId, $vote === 'APPROVED' ? 'DELIBERATION' : $vote, $vote === 'APPROVED' ? 13 : 12);
             notify_user((int)$application['landlord_id'], $applicationId, 'CPDO decision recorded', 'The committee decision has been recorded: ' . $vote . '.');
             audit_log((int)$user['id'], 'TWG_VOTE_CAST', 'applications', $applicationId, ['vote' => $vote]);
-            $_SESSION['flash_success'] = 'Decision recorded and landlord notification is queued. Approved applications still require P13-P14 final output upload.';
+            $_SESSION['flash_success'] = 'Decision recorded and landlord notification is queued. Approved applications still require final output upload.';
         }
     }
 
@@ -133,7 +138,7 @@ require __DIR__ . '/partials/header.php';
                     <div class="small text-secondary"><?= e([
                         1 => 'Requirements Display', 2 => 'Submission', 3 => 'Pre-Evaluation', 4 => 'Order of Payment',
                         5 => 'Payment Integration', 6 => 'Payment Verification', 7 => 'Inspection Scheduling',
-                        8 => 'Field Inspection', 9 => 'Site Plan Validation', 10 => 'Consolidation',
+                        8 => 'Field Inspection', 9 => 'Site Plan Validation', 10 => 'Inspection Review',
                         11 => 'Meeting', 12 => 'Decision', 13 => 'Committee Signatures', 14 => 'Endorsement / Resolution',
                     ][$i]) ?></div>
                 </div>
@@ -146,7 +151,7 @@ require __DIR__ . '/partials/header.php';
                 <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="application_id" value="<?= (int)$applicationId ?>">
                 <input type="hidden" name="action" value="evaluate">
-                <h2 class="h5">P3: Pre-Evaluation</h2>
+                <h2 class="h5">Pre-Evaluation</h2>
                 <?php foreach ($documents as $doc): ?>
                     <div class="border-top py-3">
                         <div class="fw-semibold"><?= e($doc['title']) ?></div>
@@ -171,8 +176,11 @@ require __DIR__ . '/partials/header.php';
                 <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="application_id" value="<?= (int)$applicationId ?>">
                 <input type="hidden" name="action" value="verify_payment">
-                <h2 class="h5">P6-P7: Verify Payment and Schedule Inspection</h2>
-                <input class="form-control mb-3" type="datetime-local" name="scheduled_at">
+                <h2 class="h5">Schedule Inspection</h2>
+                <label class="form-label">Inspection Date</label>
+                <input class="form-control mb-3" type="date" name="inspection_date" required>
+                <label class="form-label">Inspection Time</label>
+                <input class="form-control mb-3" type="time" name="inspection_time" required>
                 <button class="btn btn-primary">Schedule Inspection</button>
             </form>
         <?php endif; ?>
@@ -183,7 +191,7 @@ require __DIR__ . '/partials/header.php';
                 <input type="hidden" name="application_id" value="<?= (int)$applicationId ?>">
                 <input type="hidden" name="inspection_id" value="<?= (int)$inspectionRow['id'] ?>">
                 <input type="hidden" name="action" value="inspection">
-                <h2 class="h5">P8-P10: Inspection Compliance Report</h2>
+                <h2 class="h5">Inspection Compliance Report</h2>
                 <textarea class="form-control mb-3" name="findings" rows="5" placeholder="Findings"><?= e($inspectionRow['findings']) ?></textarea>
                 <label class="form-check"><input class="form-check-input" type="checkbox" name="site_plan_valid" <?= $inspectionRow['site_plan_valid'] ? 'checked' : '' ?>> Site plans validated</label>
                 <label class="form-check mb-3"><input class="form-check-input" type="checkbox" name="coordinates_valid" <?= $inspectionRow['coordinates_valid'] ? 'checked' : '' ?>> Coordinates validated</label>
@@ -195,7 +203,7 @@ require __DIR__ . '/partials/header.php';
             <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
             <input type="hidden" name="application_id" value="<?= (int)$applicationId ?>">
             <input type="hidden" name="action" value="meeting">
-            <h2 class="h5">P11: Formal Meeting and Minutes</h2>
+            <h2 class="h5">Formal Meeting and Minutes</h2>
             <input class="form-control mb-3" type="datetime-local" name="meeting_at">
             <textarea class="form-control mb-3" name="minutes" rows="4" placeholder="Meeting minutes and landlord presentation notes"></textarea>
             <button class="btn btn-outline-primary">Save Meeting Minutes</button>
@@ -206,7 +214,7 @@ require __DIR__ . '/partials/header.php';
                 <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="application_id" value="<?= (int)$applicationId ?>">
                 <input type="hidden" name="action" value="vote">
-                <h2 class="h5">P12: Decision</h2>
+                <h2 class="h5">Decision</h2>
                 <select class="form-select mb-3" name="vote">
                     <option value="APPROVED">Approved</option>
                     <option value="DISAPPROVED">Disapproved</option>
@@ -222,7 +230,7 @@ require __DIR__ . '/partials/header.php';
                 <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="application_id" value="<?= (int)$applicationId ?>">
                 <input type="hidden" name="action" value="final_output">
-                <h2 class="h5">P13-P14: Signatures and Official Output</h2>
+                <h2 class="h5">Signatures and Official Output</h2>
                 <input class="form-control mb-3" name="endorsement_number" placeholder="Endorsement / Resolution Number">
                 <label class="form-label">Committee Signatures</label>
                 <input class="form-control mb-3" type="file" name="signature_file" accept=".pdf,.jpg,.jpeg,.png">

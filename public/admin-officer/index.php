@@ -11,8 +11,8 @@ require __DIR__ . '/../partials/header.php';
 ?>
 <h1 class="h3 mb-3">Administrative Officer Dashboard</h1>
 <div class="row g-3 mb-4">
-    <div class="col-md-4"><a class="gov-card p-4 d-block text-decoration-none" href="order-payment.php"><strong>P4 Order of Payment</strong><div class="display-6"><?= count($forPayment) ?></div></a></div>
-    <div class="col-md-4"><a class="gov-card p-4 d-block text-decoration-none" href="final-output.php"><strong>P13-P14 Final Output</strong><div class="display-6"><?= count($approvedForFinal) ?></div></a></div>
+    <div class="col-md-4"><a class="gov-card p-4 d-block text-decoration-none" href="order-payment.php"><strong>Order of Payment</strong><div class="display-6"><?= count($forPayment) ?></div></a></div>
+    <div class="col-md-4"><a class="gov-card p-4 d-block text-decoration-none" href="final-output.php"><strong>Final Output</strong><div class="display-6"><?= count($approvedForFinal) ?></div></a></div>
     <div class="col-md-4"><a class="gov-card p-4 d-block text-decoration-none" href="skip-verification.php"><strong>Skip Path Verification</strong><div class="display-6"><?= count($skipPending) ?></div></a></div>
 </div>
 <section class="gov-card p-4">

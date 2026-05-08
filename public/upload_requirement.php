@@ -9,6 +9,9 @@ try {
 
     $applicationId  = (int)($_POST['application_id'] ?? 0);
     $requirementKey = trim($_POST['requirement_key'] ?? '');
+    if ($requirementKey === 'vicinity_map') {
+        throw new RuntimeException('Vicinity Map is generated automatically from the application map.');
+    }
 
     $appStmt = db()->prepare('SELECT id FROM applications WHERE id = ? AND landlord_id = ?');
     $appStmt->execute([$applicationId, (int)$user['id']]);

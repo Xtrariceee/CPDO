@@ -12,6 +12,14 @@
     --cpdo-red:    #c0392b;
     --cpdo-amber:  #d97706;
 
+    --rental-ink:         #241b0b;
+    --rental-text:        #3a2d12;
+    --rental-muted:       #76684b;
+    --rental-butter:      #f6cf4a;
+    --rental-butter-dark: #c59000;
+    --rental-butter-soft: #fff7d6;
+    --rental-border:      #f0dfad;
+
     --space-1: .5rem;
     --space-2: 1rem;
     --space-3: 1.5rem;
@@ -49,15 +57,26 @@
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
-    background:
-        radial-gradient(ellipse at top left, rgba(47,128,199,.12) 0%, transparent 55%),
-        radial-gradient(ellipse at bottom right, rgba(30,158,87,.06) 0%, transparent 50%),
-        linear-gradient(180deg, #f5ede0 0%, #f0f7ff 40%, #f2f5fb 100%);
+    background: #fff;
     color: var(--cpdo-black);
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     font-size: var(--text-base);
     line-height: 1.6;
     min-height: 100vh;
+}
+
+body.rental-interface {
+    --cpdo-navy:   var(--rental-ink);
+    --cpdo-deep:   var(--rental-ink);
+    --cpdo-blue:   var(--rental-butter);
+    --cpdo-blue-dark: var(--rental-butter-dark);
+    --cpdo-light:  var(--rental-butter-soft);
+    --cpdo-cream:  #fffaf0;
+    --cpdo-black:  var(--rental-text);
+    --cpdo-border: var(--rental-border);
+    --cpdo-muted:  var(--rental-muted);
+    background: #fff;
+    color: var(--rental-text);
 }
 
 /* ── Transitions on interactive elements ── */
@@ -109,6 +128,34 @@ h1, h2, h3, h4 { color: var(--cpdo-deep); font-weight: 800; }
     font-weight: 900;
     font-size: .85rem;
     flex-shrink: 0;
+}
+
+.cpdo-logo-img {
+    display: block;
+    object-fit: contain;
+}
+
+.cpdo-logo-img--nav {
+    width: 28px;
+    height: 28px;
+}
+
+.cpdo-logo-img--seal {
+    width: 36px;
+    height: 36px;
+}
+
+.cpdo-logo-img--large {
+    width: 58px;
+    height: 58px;
+}
+
+.rentease-logo-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    object-fit: cover;
 }
 
 .topbar .nav-link {
@@ -195,6 +242,26 @@ h1, h2, h3, h4 { color: var(--cpdo-deep); font-weight: 800; }
     transform: translateY(-1px);
 }
 
+.btn-back {
+    background: #fff;
+    border-color: #c5d3df;
+    color: #0b2a4a;
+    border-radius: 999px;
+    padding-left: 12px;
+    padding-right: 14px;
+    box-shadow: 0 1px 4px rgba(11,42,74,.08);
+}
+.btn-back span {
+    font-size: 1rem;
+    line-height: 1;
+}
+.btn-back:hover {
+    background: #eef2f7;
+    border-color: #1d6aad;
+    color: #0b2a4a;
+    box-shadow: 0 3px 10px rgba(11,42,74,.12);
+}
+
 /* Success */
 .btn-success {
     background: linear-gradient(135deg, #22a85e 0%, #178a4a 100%);
@@ -275,6 +342,35 @@ h1, h2, h3, h4 { color: var(--cpdo-deep); font-weight: 800; }
     box-shadow: none;
 }
 
+body.rental-interface .btn-primary {
+    background: var(--rental-butter);
+    border-color: #e6b82f;
+    color: var(--rental-ink);
+    box-shadow: 0 4px 14px rgba(197,144,0,.22), 0 1px 3px rgba(197,144,0,.14);
+}
+body.rental-interface .btn-primary:hover,
+body.rental-interface .btn-primary:focus {
+    background: #f8d95f;
+    border-color: #d9aa18;
+    color: var(--rental-ink);
+    box-shadow: 0 6px 20px rgba(197,144,0,.28), 0 2px 6px rgba(197,144,0,.16);
+}
+body.rental-interface .btn-primary:active {
+    background: #e6b82f;
+    border-color: #c59000;
+    color: var(--rental-ink);
+    box-shadow: 0 2px 8px rgba(197,144,0,.20);
+}
+body.rental-interface .btn-outline-primary {
+    border-color: var(--rental-butter-dark);
+    color: #8a6400;
+}
+body.rental-interface .btn-outline-primary:hover {
+    background: var(--rental-butter-soft);
+    border-color: var(--rental-butter-dark);
+    color: var(--rental-ink);
+}
+
 /* ═══════════════════════════════════════════════════════════════
    FORMS — inputs, selects, labels
    ═══════════════════════════════════════════════════════════════ */
@@ -319,19 +415,22 @@ textarea.form-control { min-height: 80px; resize: vertical; }
 .eval-select {
     appearance: none;
     -webkit-appearance: none;
-    border-radius: var(--radius-sm);
-    border: 1.5px solid var(--cpdo-border);
+    border-radius: 6px;
+    border: 1.5px solid #c5d3df;
     font-size: var(--text-sm);
-    font-weight: 700;
-    min-height: 36px;
-    padding: 6px 32px 6px 12px;
+    font-weight: 800;
+    min-height: 40px;
+    min-width: 132px;
+    padding: 7px 36px 7px 12px;
     cursor: pointer;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2362748a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 10px center;
+    background-position: right 12px center;
     background-size: 12px;
-    transition: border-color var(--transition-base), background-color var(--transition-base), color var(--transition-base), box-shadow var(--transition-base);
+    box-shadow: 0 1px 3px rgba(11,42,74,.06);
+    transition: border-color var(--transition-base), background-color var(--transition-base), color var(--transition-base), box-shadow var(--transition-base), transform var(--transition-base);
 }
+.eval-select:hover { transform: translateY(-1px); }
 .eval-select:focus {
     outline: none;
     box-shadow: 0 0 0 3px rgba(47,128,199,.15);
@@ -353,6 +452,40 @@ textarea.form-control { min-height: 80px; resize: vertical; }
     background-color: #fff2f1;
     border-color: #d04437;
     color: #7a1a10;
+}
+.eval-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.eval-bulk-btn {
+    min-height: 34px;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: var(--text-xs);
+    font-weight: 800;
+    border: 1.5px solid #c5d3df;
+    background: #fff;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(11,42,74,.06);
+}
+.eval-bulk-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 3px 10px rgba(11,42,74,.10);
+}
+.eval-bulk-btn--pass {
+    color: #14532d;
+    border-color: #86efac;
+    background: #f0fdf4;
+}
+.eval-bulk-btn--pass:hover { background: #dcfce7; }
+.eval-bulk-btn--reset {
+    color: #3a5068;
+    background: #f8fbff;
+}
+.eval-bulk-btn--reset:hover {
+    border-color: #9aaabd;
+    background: #eef2f7;
 }
 
 /* ═══════════════════════════════════════════════════════════════

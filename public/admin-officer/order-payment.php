@@ -21,7 +21,7 @@ $order = $application ? payment_order_for_application((int)$application['id']) :
 
 require __DIR__ . '/../partials/header.php';
 ?>
-<h1 class="h3 mb-3">P4 Order of Payment Generator</h1>
+<h1 class="h3 mb-3">Order of Payment Generator</h1>
 <div class="row g-4">
     <div class="col-lg-4">
         <div class="gov-card p-3">
@@ -46,7 +46,9 @@ require __DIR__ . '/../partials/header.php';
                     <dt class="col-sm-4">Date</dt><dd class="col-sm-8"><?= e(date('Y-m-d')) ?></dd>
                     <dt class="col-sm-4">Account Name</dt><dd class="col-sm-8"><?= e($application['account_name']) ?></dd>
                     <dt class="col-sm-4">Account Address</dt><dd class="col-sm-8"><?= e($application['account_address']) ?></dd>
-                    <dt class="col-sm-4">Service Fee</dt><dd class="col-sm-8"><?= currency_php(1500.00) ?></dd>
+                    <dt class="col-sm-4">Paying For</dt><dd class="col-sm-8"><?= e($order['payment_for'] ?? default_payment_for($application)) ?></dd>
+                    <dt class="col-sm-4">Fee / Amount</dt><dd class="col-sm-8"><?= currency_php((float)($order['service_fee'] ?? 1500.00)) ?></dd>
+                    <dt class="col-sm-4">Payment Method</dt><dd class="col-sm-8"><?= e($order['payment_method'] ?? 'Pending') ?></dd>
                     <dt class="col-sm-4">Account Code</dt><dd class="col-sm-8">4-02-01-020-8-6</dd>
                 </dl>
                 <form method="post">
