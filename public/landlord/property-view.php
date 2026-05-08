@@ -24,7 +24,7 @@ require __DIR__ . '/../partials/header.php';
 ?>
 
 <div class="d-flex align-items-center gap-3 mb-4">
-    <a class="btn btn-outline-secondary btn-sm" href="javascript:history.back()">← Back</a>
+    <a class="btn btn-back btn-sm" href="javascript:history.back()"><span aria-hidden="true">&larr;</span> Back</a>
     <h1 class="h3 mb-0"><?= e($property['title']) ?></h1>
     <span class="badge ms-auto align-self-start <?= $property['status'] === 'ACTIVE' ? 'text-bg-success' : ($property['status'] === 'INACTIVE' ? 'text-bg-secondary' : 'text-bg-warning') ?>">
         <?= e($property['status']) ?>

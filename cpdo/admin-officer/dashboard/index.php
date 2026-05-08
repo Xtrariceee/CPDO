@@ -1,0 +1,97 @@
+<?php
+require_once __DIR__ . '/../../../app/bootstrap_cpdo.php';
+$user = require_role([ROLE_ADMIN_OFFICER, ROLE_SYSTEM_ADMIN]);
+
+$forPayment  = officer_applications(['PRE_EVALUATION', 'SUBMITTED']);
+$forFinal    = officer_applications(['DELIBERATION']);
+$skipPending = db()->query('SELECT * FROM compliance_uploads WHERE status="PENDING_VERIFICATION" ORDER BY created_at DESC')->fetchAll();
+
+require __DIR__ . '/../../partials/header.php';
+?>
+<h1 class="h3 mb-3">Administrative Officer Dashboard</h1>
+<style>
+.zo-card {
+    display: block;
+    height: 100%;
+    padding: 18px 20px;
+    border: 1px solid #d0dae6;
+    border-left: 4px solid #1d6aad;
+    border-radius: 8px;
+    background: #fff;
+    color: #0b2a4a;
+    text-decoration: none;
+    box-shadow: 0 2px 4px rgba(11,42,74,.05), 0 8px 20px rgba(11,42,74,.07);
+}
+.zo-card:hover {
+    border-color: #b0c4d8;
+    border-left-color: #0b2a4a;
+    color: #0b2a4a;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(11,42,74,.10);
+}
+.zo-card-title {
+    font-size: .96rem;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+.zo-card-count {
+    font-size: 2rem;
+    line-height: 1;
+    font-weight: 900;
+}
+.zo-card-note {
+    font-size: .78rem;
+    color: #62748a;
+    margin-top: 8px;
+}
+</style>
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <a class="zo-card" href="../order-payment.php">
+            <div class="zo-card-title">Order of Payment</div>
+            <div class="zo-card-count"><?= count($forPayment) ?></div>
+            <div class="zo-card-note">Applications awaiting order of payment</div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a class="zo-card" href="../final-output.php">
+            <div class="zo-card-title">Final Output</div>
+            <div class="zo-card-count"><?= count($forFinal) ?></div>
+            <div class="zo-card-note">Applications ready for final resolution</div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a class="zo-card" href="../skip-verification.php">
+            <div class="zo-card-title">Skip Path Verification</div>
+            <div class="zo-card-count"><?= count($skipPending) ?></div>
+            <div class="zo-card-note">Compliance uploads pending review</div>
+        </a>
+    </div>
+</div>
+<section class="gov-card p-4">
+    <h2 class="h5">Pending Administrative Actions</h2>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Type</th><th>Record</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+            <?php foreach ($forPayment as $app): ?>
+                <tr>
+                    <td>CPDO Application</td>
+                    <td><?= e($app['registry_number']) ?> · <?= e($app['property_title']) ?></td>
+                    <td><?= e(workflow_status_label($app['phase_status'])) ?></td>
+                    <td><a class="btn btn-sm btn-primary" href="../order-payment.php?id=<?= (int)$app['id'] ?>">Generate OP</a></td>
+                </tr>
+            <?php endforeach; ?>
+            <?php foreach ($skipPending as $upload): ?>
+                <tr>
+                    <td>Listing Skip Path</td>
+                    <td><?= e($upload['property_title']) ?></td>
+                    <td><?= e($upload['status']) ?></td>
+                    <td><a class="btn btn-sm btn-primary" href="../skip-verification.php?id=<?= (int)$upload['id'] ?>">Review</a></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</section>
+<?php require __DIR__ . '/../../partials/footer.php'; ?>

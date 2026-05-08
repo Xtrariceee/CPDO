@@ -4,15 +4,89 @@ $user = require_role([ROLE_ZONING, ROLE_SYSTEM_ADMIN]);
 
 $underEvaluation = officer_applications(['SUBMITTED', 'PRE_EVALUATION']);
 $paid = officer_applications(['PAID']);
-$forMeeting = officer_applications(['FOR_MEETING']);
+$paymentToVerify = [];
+$scheduleReady = [];
+foreach ($paid as $paidApplication) {
+    $order = payment_order_for_application((int)$paidApplication['id']);
+    if ($order && payment_order_is_verified($order)) {
+        $scheduleReady[] = $paidApplication;
+    } else {
+        $paymentToVerify[] = $paidApplication;
+    }
+}
 
 require __DIR__ . '/../partials/header.php';
 ?>
 <h1 class="h3 mb-3">Zoning Officer IV Dashboard</h1>
+<style>
+.zo-card {
+    display: block;
+    height: 100%;
+    padding: 18px 20px;
+    border: 1px solid #d0dae6;
+    border-left: 4px solid #1d6aad;
+    border-radius: 8px;
+    background: #fff;
+    color: #0b2a4a;
+    text-decoration: none;
+    box-shadow: 0 2px 4px rgba(11,42,74,.05), 0 8px 20px rgba(11,42,74,.07);
+}
+.zo-card:hover {
+    border-color: #b0c4d8;
+    border-left-color: #0b2a4a;
+    color: #0b2a4a;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(11,42,74,.10);
+}
+.zo-card-label {
+    font-size: .68rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: #1d6aad;
+    margin-bottom: 4px;
+}
+.zo-card-title {
+    font-size: .96rem;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+.zo-card-count {
+    font-size: 2rem;
+    line-height: 1;
+    font-weight: 900;
+}
+.zo-card-note {
+    font-size: .78rem;
+    color: #62748a;
+    margin-top: 8px;
+}
+</style>
 <div class="row g-3 mb-4">
-    <div class="col-md-4"><a class="gov-card p-4 d-block text-decoration-none" href="pre-evaluation.php"><strong>P3 Pre-Evaluation</strong><div class="display-6"><?= count($underEvaluation) ?></div></a></div>
-    <div class="col-md-4"><a class="gov-card p-4 d-block text-decoration-none" href="payment-scheduling.php"><strong>P6-P7 Payment / Scheduling</strong><div class="display-6"><?= count($paid) ?></div></a></div>
-    <div class="col-md-4"><a class="gov-card p-4 d-block text-decoration-none" href="consolidation.php"><strong>P10 Consolidation</strong><div class="display-6"><?= count($forMeeting) ?></div></a></div>
+    <div class="col-md-4">
+        <a class="zo-card" href="pre-evaluation.php">
+            <div class="zo-card-label">Pre-evaluation</div>
+            <div class="zo-card-title">Pre-evaluation</div>
+            <div class="zo-card-count"><?= count($underEvaluation) ?></div>
+            <div class="zo-card-note">Documents awaiting review</div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a class="zo-card" href="payment-verification.php">
+            <div class="zo-card-label">Payment Verification</div>
+            <div class="zo-card-title">Payment</div>
+            <div class="zo-card-count"><?= count($paymentToVerify) ?></div>
+            <div class="zo-card-note">Paid receipts awaiting verification</div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a class="zo-card" href="inspection-scheduling.php">
+            <div class="zo-card-label">Inspection Scheduling</div>
+            <div class="zo-card-title">Schedule Site Inspection</div>
+            <div class="zo-card-count"><?= count($scheduleReady) ?></div>
+            <div class="zo-card-note">Verified payments ready to schedule</div>
+        </a>
+    </div>
 </div>
 <section class="gov-card p-4">
     <h2 class="h5">Assigned Workflow Status</h2>
@@ -30,9 +104,12 @@ require __DIR__ . '/../partials/header.php';
                         <?php if (in_array($application['phase_status'], ['SUBMITTED', 'PRE_EVALUATION'], true)): ?>
                             <a class="btn btn-sm btn-primary" href="pre-evaluation.php?id=<?= (int)$application['id'] ?>">Evaluate</a>
                         <?php elseif ($application['phase_status'] === 'PAID'): ?>
-                            <a class="btn btn-sm btn-primary" href="payment-scheduling.php?id=<?= (int)$application['id'] ?>">Schedule</a>
+                            <?php $rowOrder = payment_order_for_application((int)$application['id']) ?: []; ?>
+                            <a class="btn btn-sm btn-primary" href="<?= payment_order_is_verified($rowOrder) ? 'inspection-scheduling' : 'payment-verification' ?>.php?id=<?= (int)$application['id'] ?>"><?= payment_order_is_verified($rowOrder) ? 'Schedule' : 'Verify Payment' ?></a>
+                        <?php elseif ($application['phase_status'] === 'PAYMENT_PENDING'): ?>
+                            <span class="badge text-bg-warning">Awaiting Payment</span>
                         <?php elseif ($application['phase_status'] === 'FOR_MEETING'): ?>
-                            <a class="btn btn-sm btn-primary" href="consolidation.php?id=<?= (int)$application['id'] ?>">Consolidate</a>
+                            <a class="btn btn-sm btn-outline-primary" href="../application_show.php?id=<?= (int)$application['id'] ?>">View</a>
                         <?php else: ?>
                             <a class="btn btn-sm btn-outline-primary" href="../application_show.php?id=<?= (int)$application['id'] ?>">View</a>
                         <?php endif; ?>

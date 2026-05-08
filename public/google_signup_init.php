@@ -1,11 +1,15 @@
 <?php
 /**
  * Stores the Tenant role in session and redirects to Google OAuth.
+ * Accessible via GET (linked from register page) or POST.
  * All Google sign-ups create a Tenant account by default.
- * Users can request an upgrade to Landlord from their dashboard.
  */
 require_once __DIR__ . '/../app/bootstrap.php';
-verify_csrf();
+
+// Only verify CSRF on POST; GET is safe (no state change before Google redirect)
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
+}
 
 if (empty($config['google']['client_id'])) {
     $_SESSION['flash_error'] = 'Google OAuth is not configured.';

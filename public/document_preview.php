@@ -4,6 +4,8 @@ require_once __DIR__ . '/../app/bootstrap.php';
 $user       = require_login();
 $documentId = (int)($_GET['id'] ?? 0);
 
+header('X-Frame-Options: SAMEORIGIN');
+
 $stmt = db()->prepare(
     'SELECT rd.*, a.landlord_id
      FROM requirement_documents rd
@@ -32,6 +34,7 @@ if (!empty($document['file_data'])) {
     header('Content-Type: ' . $mime);
     header('Content-Disposition: inline; filename="document-preview"');
     header('X-Content-Type-Options: nosniff');
+    header('Content-Length: ' . strlen($document['file_data']));
     echo $document['file_data'];
     exit;
 }

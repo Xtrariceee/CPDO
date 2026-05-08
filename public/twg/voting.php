@@ -40,7 +40,7 @@ if ($application) {
 
 require __DIR__ . '/../partials/header.php';
 ?>
-<h1 class="h3 mb-3">P12 Voting System</h1>
+<h1 class="h3 mb-3">Voting System</h1>
 <div class="row g-4">
     <div class="col-lg-4">
         <div class="gov-card p-3">

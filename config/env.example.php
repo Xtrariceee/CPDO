@@ -28,6 +28,8 @@
 return [
     'app' => [
         'base_url'                => 'http://localhost/LandReclassification/public',
+        'cpdo_url'                => 'http://localhost/LandReclassification/cpdo',
+        'cpdo_logo_path'          => 'assets/img/cpdo-logo.png',
         'name'                    => 'CPDO Land Reclassification Portal',
         'session_timeout_seconds' => 900,
     ],
@@ -42,9 +44,10 @@ return [
         'encryption_key_hex' => 'replace_with_64_hex_characters',
     ],
     'google' => [
-        'client_id'    => '640635980823-n8lmkqljuh282hmq4mhl4g17co5sibje.apps.googleusercontent.com',
-        'client_secret' => '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',
-        'redirect_uri' => 'http://localhost/LandReclassification/public/oauth_google_callback.php',
+        'client_id'     => '',
+        'client_secret' => '',
+        'redirect_uri'  => 'http://localhost/LandReclassification/public/oauth_google_callback.php',
+        'maps_api_key'  => '',   // ← Add your Google Maps JavaScript API + Static Maps API key here
     ],
     'paymongo' => [
         'secret_key'     => 'sk_test_YjHXCUyRDnj7jw1EvM658CG7',

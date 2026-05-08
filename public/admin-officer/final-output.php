@@ -29,7 +29,7 @@ $application = $applicationId ? officer_application($applicationId) : ($applicat
 
 require __DIR__ . '/../partials/header.php';
 ?>
-<h1 class="h3 mb-3">P13-P14 Final Resolution Upload</h1>
+<h1 class="h3 mb-3">Final Resolution Upload</h1>
 <div class="row g-4">
     <div class="col-lg-4">
         <div class="gov-card p-3">

@@ -21,7 +21,7 @@ $docs->execute([$applicationId]);
 $documents = $docs->fetchAll();
 
 $totalDocs    = count($documents);
-$uploadedDocs = count(array_filter($documents, fn($d) => !empty($d['file_path'])));
+$uploadedDocs = count(array_filter($documents, fn($d) => !empty($d['file_data']) || !empty($d['file_path'])));
 
 $payment = db()->prepare('SELECT * FROM payment_orders WHERE application_id = ? ORDER BY id DESC LIMIT 1');
 $payment->execute([$applicationId]);
@@ -30,6 +30,12 @@ $paymentOrder = $payment->fetch();
 $inspection = db()->prepare('SELECT * FROM inspections WHERE application_id = ? ORDER BY id DESC LIMIT 1');
 $inspection->execute([$applicationId]);
 $inspectionRow = $inspection->fetch();
+$inspectionDisplay = 'Not scheduled';
+if ($inspectionRow) {
+    $inspectionDisplay = !empty($inspectionRow['scheduled_date']) && !empty($inspectionRow['scheduled_time'])
+        ? $inspectionRow['scheduled_date'] . ' ' . substr((string)$inspectionRow['scheduled_time'], 0, 5)
+        : ($inspectionRow['scheduled_at'] ?? 'Not scheduled');
+}
 
 $meeting = db()->prepare('SELECT * FROM meetings WHERE application_id = ? ORDER BY id DESC LIMIT 1');
 $meeting->execute([$applicationId]);
@@ -50,7 +56,7 @@ require __DIR__ . '/partials/header.php';
     $actionPath = match ($user['role']) {
         ROLE_ZONING => in_array($application['phase_status'], ['PAID'], true)
             ? 'zoning-officer/payment-scheduling.php'
-            : ($application['phase_status'] === 'FOR_MEETING' ? 'zoning-officer/consolidation.php' : 'zoning-officer/pre-evaluation.php'),
+            : ($application['phase_status'] === 'FOR_MEETING' ? 'workflow_action.php' : 'zoning-officer/pre-evaluation.php'),
         ROLE_ADMIN_OFFICER, ROLE_SYSTEM_ADMIN => in_array($application['phase_status'], ['DELIBERATION'], true)
             ? 'admin-officer/final-output.php'
             : 'admin-officer/order-payment.php',
@@ -116,8 +122,12 @@ require __DIR__ . '/partials/header.php';
             <h2 class="h5 mb-3">Payment</h2>
             <?php if ($paymentOrder): ?>
                 <dl class="row mb-0 small">
+                    <dt class="col-5">Account Name</dt><dd class="col-7"><?= e($paymentOrder['account_name'] ?? $application['account_name']) ?></dd>
+                    <dt class="col-5">Paying For</dt><dd class="col-7"><?= e($paymentOrder['payment_for'] ?? default_payment_for($application)) ?></dd>
+                    <dt class="col-5">Date</dt><dd class="col-7"><?= e($paymentOrder['paid_at'] ?? $paymentOrder['created_at'] ?? 'Pending') ?></dd>
                     <dt class="col-5">OP Number</dt><dd class="col-7"><?= e($paymentOrder['op_number']) ?></dd>
-                    <dt class="col-5">Service Fee</dt><dd class="col-7"><?= currency_php((float)$paymentOrder['service_fee']) ?></dd>
+                    <dt class="col-5">Fee / Amount</dt><dd class="col-7"><?= currency_php((float)$paymentOrder['service_fee']) ?></dd>
+                    <dt class="col-5">Method</dt><dd class="col-7"><?= e($paymentOrder['payment_method'] ?? ($paymentOrder['status'] === 'PAID' ? 'PayMongo' : 'Pending')) ?></dd>
                     <dt class="col-5">Status</dt>
                     <dd class="col-7"><span class="badge <?= $paymentOrder['status'] === 'PAID' ? 'text-bg-success' : 'text-bg-warning' ?>"><?= e($paymentOrder['status']) ?></span></dd>
                 </dl>
@@ -128,7 +138,7 @@ require __DIR__ . '/partials/header.php';
         <section class="gov-card p-4">
             <h2 class="h5 mb-3">Inspection &amp; Meeting</h2>
             <dl class="row mb-0 small">
-                <dt class="col-5">Inspection</dt><dd class="col-7"><?= e($inspectionRow['scheduled_at'] ?? 'Not scheduled') ?></dd>
+                <dt class="col-5">Inspection</dt><dd class="col-7"><?= e($inspectionDisplay) ?></dd>
                 <dt class="col-5">Meeting</dt><dd class="col-7"><?= e($meetingRow['scheduled_at'] ?? 'Not scheduled') ?></dd>
             </dl>
         </section>

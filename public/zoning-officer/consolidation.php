@@ -22,7 +22,7 @@ $inspection = $application ? latest_inspection_for_application((int)$application
 
 require __DIR__ . '/../partials/header.php';
 ?>
-<h1 class="h3 mb-3">P10 Inspection Consolidation</h1>
+<h1 class="h3 mb-3">Inspection Consolidation</h1>
 <div class="row g-4">
     <div class="col-lg-4">
         <div class="gov-card p-3">
