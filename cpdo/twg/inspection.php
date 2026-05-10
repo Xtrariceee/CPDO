@@ -300,6 +300,29 @@ textarea.twg-control{min-height:130px;resize:vertical;line-height:1.6;}
 @media(max-width:900px){.twg-checklist-item{grid-template-columns:1fr;}.twg-form-grid,.twg-form-grid--three,.twg-core-checks{grid-template-columns:1fr;}}
 @media(max-width:575.98px){.twg-shell{padding:24px 14px 44px;}.twg-hero{padding:22px;}.twg-report-card{padding:18px;}.twg-radio-grid{grid-template-columns:1fr;}}
 @media print{header,nav,.twg-hero,.twg-panel:first-child,.twg-submit-row,.twg-print-panel{display:none !important;}body{background:#fff !important;}.twg-shell{max-width:none;padding:0;}.twg-layout{display:block;}.twg-panel{box-shadow:none;border:0;}.twg-checklist-item{break-inside:avoid;}}
+
+/* ── Photo upload section ── */
+.photo-dropzone{border:2px dashed var(--twg-border);border-radius:18px;background:#f8fbff;padding:28px 20px;text-align:center;cursor:pointer;transition:border-color .18s,background .18s;margin-bottom:18px;}
+.photo-dropzone.is-dragover{border-color:var(--twg-blue);background:var(--twg-blue-soft);}
+.photo-dropzone-inner{display:flex;flex-direction:column;align-items:center;gap:4px;}
+.twg-btn-upload{display:inline-flex;align-items:center;gap:7px;margin-top:12px;padding:9px 18px;border-radius:999px;border:1px solid var(--twg-blue);background:var(--twg-blue-soft);color:var(--twg-blue);font-size:.8rem;font-weight:900;cursor:pointer;transition:background .16s,color .16s;}
+.twg-btn-upload:hover{background:var(--twg-blue);color:#fff;}
+.photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:4px;}
+.photo-card{border-radius:14px;overflow:hidden;border:1px solid var(--twg-border);background:#fff;box-shadow:0 4px 12px rgba(13,49,84,.08);transition:transform .18s,box-shadow .18s;}
+.photo-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(13,49,84,.12);}
+.photo-card-img-wrap{position:relative;aspect-ratio:4/3;background:#edf2f7;overflow:hidden;}
+.photo-card-img-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
+.photo-card-delete{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;background:rgba(220,53,69,.85);border:none;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transition:opacity .16s;backdrop-filter:blur(4px);}
+.photo-card:hover .photo-card-delete{opacity:1;}
+.photo-card-preview{position:absolute;top:6px;left:6px;width:24px;height:24px;border-radius:50%;background:rgba(13,110,253,.85);border:none;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transition:opacity .16s;backdrop-filter:blur(4px);}
+.photo-card:hover .photo-card-preview{opacity:1;}
+.photo-card-meta{padding:8px 10px;}
+.photo-card-category{display:block;font-size:.68rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:var(--twg-blue);margin-bottom:2px;}
+.photo-card-caption{display:block;font-size:.74rem;color:var(--twg-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.photo-card-uploading{opacity:.6;pointer-events:none;}
+.photo-card-uploading .photo-card-img-wrap::after{content:"Uploading…";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.7);font-size:.78rem;font-weight:800;color:var(--twg-blue);}
+@media(max-width:575.98px){.photo-grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));}}
+@media print{#photo-section{break-before:page;}.photo-card-delete{display:none !important;}}
 </style>
 <script>document.body.classList.add('twg-inspection-page');</script>
 
@@ -510,6 +533,86 @@ textarea.twg-control{min-height:130px;resize:vertical;line-height:1.6;}
                         </div>
                     </section>
 
+                    <!-- ── Site Photo Documentation ──────────────────────── -->
+                    <section class="twg-section" id="photo-section">
+                        <h3 class="twg-section-title">Site Photo Documentation</h3>
+                        <p class="twg-note mb-3">Upload site photos as evidence. Recommended: frontage, road access, lot view, adjacent uses, existing structures, and any issue areas. Max 10 MB per photo (JPEG, PNG, WebP).</p>
+
+                        <?php
+                        // Load already-uploaded photos for this inspection
+                        $existingPhotos = [];
+                        if ($inspection) {
+                            $pStmt = db()->prepare(
+                                'SELECT id, caption, category, file_mime, file_size, uploaded_at
+                                 FROM inspection_photos
+                                 WHERE inspection_id = ?
+                                 ORDER BY uploaded_at ASC'
+                            );
+                            $pStmt->execute([(int)$inspection['id']]);
+                            $existingPhotos = $pStmt->fetchAll();
+                        }
+                        $cpdoUrl = rtrim($config['app']['cpdo_url'] ?? '', '/');
+                        ?>
+
+                        <!-- Upload drop zone -->
+                        <div class="photo-dropzone" id="photoDropzone" role="region" aria-label="Photo upload area">
+                            <div class="photo-dropzone-inner">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" style="color:var(--twg-blue);margin-bottom:10px;">
+                                    <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+                                    <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/>
+                                </svg>
+                                <p style="margin:0 0 6px;font-size:.9rem;font-weight:800;color:#071d35;">Drop photos here or click to browse</p>
+                                <p style="margin:0;font-size:.78rem;color:var(--twg-muted);">JPEG, PNG, WebP · Max 10 MB each · Multiple files allowed</p>
+                                <input type="file" id="photoFileInput" accept="image/jpeg,image/png,image/webp,image/*"
+                                       multiple capture="environment" style="display:none;" aria-label="Choose site photos">
+                                <button type="button" class="twg-btn-upload" id="photoBrowseBtn">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path d="M15 12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1.172a3 3 0 0 0 2.12-.879l.83-.828A1 1 0 0 1 6.827 3h2.344a1 1 0 0 1 .707.293l.828.828A3 3 0 0 0 12.828 5H14a1 1 0 0 1 1 1v6zM2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2z"/><path d="M8 11a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5zm0 1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3 6.5a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0z"/></svg>
+                                    Choose / Take Photo
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Photo grid (existing + newly uploaded) -->
+                        <div class="photo-grid" id="photoGrid">
+                            <?php foreach ($existingPhotos as $photo): ?>
+                                <div class="photo-card" data-photo-id="<?= (int)$photo['id'] ?>">
+                                    <div class="photo-card-img-wrap">
+                                        <img src="<?= e($cpdoUrl) ?>/twg/inspection_photo.php?id=<?= (int)$photo['id'] ?>"
+                                             alt="<?= e($photo['caption'] ?: 'Site photo') ?>"
+                                             loading="lazy"
+                                             class="photo-card-thumb"
+                                             data-lightbox-src="<?= e($cpdoUrl) ?>/twg/inspection_photo.php?id=<?= (int)$photo['id'] ?>"
+                                             data-lightbox-caption="<?= e($photo['caption'] ?: ucwords(str_replace('_', ' ', $photo['category']))) ?>">
+                                        <button type="button" class="photo-card-delete" data-photo-id="<?= (int)$photo['id'] ?>" aria-label="Delete photo">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854z"/></svg>
+                                        </button>
+                                        <button type="button" class="photo-card-preview" aria-label="View full size">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M1.5 1h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5A.5.5 0 0 1 1.5 1zm13 0a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5zM1 14.5v-5a.5.5 0 0 1 1 0v5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm13.5.5h-5a.5.5 0 0 1 0-1h5v-5a.5.5 0 0 1 1 0v5a.5.5 0 0 1-.5.5z"/></svg>
+                                        </button>
+                                    </div>
+                                    <div class="photo-card-meta">
+                                        <span class="photo-card-category"><?= e(ucwords(str_replace('_', ' ', $photo['category']))) ?></span>
+                                        <?php if ($photo['caption']): ?>
+                                            <span class="photo-card-caption"><?= e($photo['caption']) ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <!-- Lightbox overlay -->
+                        <div id="photoLightbox" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;" role="dialog" aria-modal="true" aria-label="Photo preview">
+                            <button id="lightboxClose" type="button" style="position:absolute;top:18px;right:22px;background:rgba(255,255,255,.12);border:none;color:#fff;width:40px;height:40px;border-radius:50%;font-size:1.3rem;cursor:pointer;display:flex;align-items:center;justify-content:center;" aria-label="Close preview">&times;</button>
+                            <button id="lightboxPrev" type="button" style="position:absolute;left:18px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.12);border:none;color:#fff;width:44px;height:44px;border-radius:50%;font-size:1.5rem;cursor:pointer;display:flex;align-items:center;justify-content:center;" aria-label="Previous photo">&#8249;</button>
+                            <button id="lightboxNext" type="button" style="position:absolute;right:18px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.12);border:none;color:#fff;width:44px;height:44px;border-radius:50%;font-size:1.5rem;cursor:pointer;display:flex;align-items:center;justify-content:center;" aria-label="Next photo">&#8250;</button>
+                            <img id="lightboxImg" src="" alt="" style="max-width:90vw;max-height:80vh;border-radius:10px;object-fit:contain;box-shadow:0 24px 60px rgba(0,0,0,.6);">
+                            <p id="lightboxCaption" style="color:rgba(255,255,255,.75);font-size:.88rem;font-weight:600;margin:0;text-align:center;max-width:600px;"></p>
+                            <p id="lightboxCounter" style="color:rgba(255,255,255,.4);font-size:.75rem;margin:0;"></p>
+                        </div>
+
+                        <div id="photoUploadStatus" style="margin-top:10px;font-size:.82rem;color:var(--twg-muted);"></div>
+                    </section>
+
                     <div class="twg-submit-row">
                         <span class="twg-note">Submitting saves the checklist into the inspection findings and moves the application to the meeting/consolidation stage.</span>
                         <button class="twg-btn-primary" type="submit">Submit Inspection Compliance Report</button>
@@ -551,6 +654,258 @@ textarea.twg-control{min-height:130px;resize:vertical;line-height:1.6;}
         radio.addEventListener('change', updateProgress);
     });
     updateProgress();
+}());
+</script>
+
+<script>
+// ── Inspection Photo Upload ───────────────────────────────────────────────────
+(function () {
+    var appId       = <?= (int)($application['id'] ?? 0) ?>;
+    var csrfToken   = <?= json_encode(csrf_token()) ?>;
+    var uploadUrl   = 'upload_inspection_photo.php';
+    var deleteUrl   = 'delete_inspection_photo.php';
+
+    var dropzone    = document.getElementById('photoDropzone');
+    var fileInput   = document.getElementById('photoFileInput');
+    var browseBtn   = document.getElementById('photoBrowseBtn');
+    var grid        = document.getElementById('photoGrid');
+    var statusEl    = document.getElementById('photoUploadStatus');
+
+    if (!dropzone || !appId) { return; }
+
+    var categoryLabels = {
+        frontage: 'Frontage', road_access: 'Road Access', lot_view: 'Lot View',
+        adjacent_uses: 'Adjacent Uses', existing_structures: 'Existing Structures',
+        issue_area: 'Issue Area', other: 'Other'
+    };
+
+    // ── Open file picker ──────────────────────────────────────────────────────
+    browseBtn.addEventListener('click', function () { fileInput.click(); });
+    dropzone.addEventListener('click', function (e) {
+        if (e.target === browseBtn || browseBtn.contains(e.target)) { return; }
+        fileInput.click();
+    });
+
+    // ── Drag-and-drop ─────────────────────────────────────────────────────────
+    dropzone.addEventListener('dragover', function (e) { e.preventDefault(); dropzone.classList.add('is-dragover'); });
+    dropzone.addEventListener('dragleave', function () { dropzone.classList.remove('is-dragover'); });
+    dropzone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropzone.classList.remove('is-dragover');
+        uploadFiles(Array.from(e.dataTransfer.files));
+    });
+
+    fileInput.addEventListener('change', function () {
+        uploadFiles(Array.from(fileInput.files));
+        fileInput.value = '';
+    });
+
+    // ── Upload queue ──────────────────────────────────────────────────────────
+    function uploadFiles(files) {
+        var images = files.filter(function (f) { return f.type.startsWith('image/'); });
+        if (!images.length) { setStatus('No image files selected.', 'error'); return; }
+        setStatus('Uploading ' + images.length + ' photo(s)…', 'info');
+        var done = 0;
+        images.forEach(function (file) {
+            uploadOne(file, function (ok) {
+                done++;
+                if (done === images.length) {
+                    setStatus(ok ? 'All photos uploaded.' : 'Some photos failed — check individual errors.', ok ? 'ok' : 'error');
+                }
+            });
+        });
+    }
+
+    function uploadOne(file, callback) {
+        // Show placeholder card while uploading
+        var placeholderId = 'ph-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        var placeholder   = buildPlaceholderCard(file, placeholderId);
+        grid.appendChild(placeholder);
+
+        // Ask for category + caption via a small inline prompt
+        var category = promptCategory(file.name);
+        var caption  = promptCaption();
+
+        var fd = new FormData();
+        fd.append('csrf_token',     csrfToken);
+        fd.append('application_id', appId);
+        fd.append('photo',          file);
+        fd.append('category',       category);
+        fd.append('caption',        caption);
+
+        fetch(uploadUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                placeholder.remove();
+                if (!data.ok) { throw new Error(data.message || 'Upload failed.'); }
+                grid.appendChild(buildPhotoCard(data.photo_id, data.thumb_url, category, caption));
+                callback(true);
+            })
+            .catch(function (err) {
+                placeholder.remove();
+                setStatus('Failed: ' + err.message, 'error');
+                callback(false);
+            });
+    }
+
+    function promptCategory(filename) {
+        var lower = filename.toLowerCase();
+        if (lower.includes('front'))    { return 'frontage'; }
+        if (lower.includes('road') || lower.includes('access')) { return 'road_access'; }
+        if (lower.includes('lot'))      { return 'lot_view'; }
+        if (lower.includes('adj') || lower.includes('neighbor')) { return 'adjacent_uses'; }
+        if (lower.includes('struct') || lower.includes('build')) { return 'existing_structures'; }
+        if (lower.includes('issue') || lower.includes('problem')) { return 'issue_area'; }
+        return 'other';
+    }
+
+    function promptCaption() { return ''; } // silent upload; caption can be added later
+
+    function buildPlaceholderCard(file, id) {
+        var card = document.createElement('div');
+        card.className = 'photo-card photo-card-uploading';
+        card.id = id;
+        var wrap = document.createElement('div');
+        wrap.className = 'photo-card-img-wrap';
+        var img = document.createElement('img');
+        img.src = URL.createObjectURL(file);
+        img.alt = file.name;
+        wrap.appendChild(img);
+        card.appendChild(wrap);
+        var meta = document.createElement('div');
+        meta.className = 'photo-card-meta';
+        meta.innerHTML = '<span class="photo-card-caption">' + escHtml(file.name) + '</span>';
+        card.appendChild(meta);
+        return card;
+    }
+
+    function buildPhotoCard(photoId, thumbUrl, category, caption) {
+        var card = document.createElement('div');
+        card.className = 'photo-card';
+        card.dataset.photoId = photoId;
+        card.innerHTML =
+            '<div class="photo-card-img-wrap">' +
+                '<img src="' + escHtml(thumbUrl) + '" alt="Site photo" loading="lazy">' +
+                '<button type="button" class="photo-card-delete" data-photo-id="' + photoId + '" aria-label="Delete photo">' +
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854z"/></svg>' +
+                '</button>' +
+            '</div>' +
+            '<div class="photo-card-meta">' +
+                '<span class="photo-card-category">' + escHtml(categoryLabels[category] || 'Other') + '</span>' +
+                (caption ? '<span class="photo-card-caption">' + escHtml(caption) + '</span>' : '') +
+            '</div>';
+        return card;
+    }
+
+    // ── Delete ────────────────────────────────────────────────────────────────
+    grid.addEventListener('click', function (e) {
+        var btn = e.target.closest('.photo-card-delete');
+        if (!btn) { return; }
+        var photoId = btn.dataset.photoId;
+        if (!confirm('Delete this photo? This cannot be undone.')) { return; }
+
+        var fd = new FormData();
+        fd.append('csrf_token', csrfToken);
+        fd.append('photo_id',   photoId);
+
+        fetch(deleteUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (!data.ok) { throw new Error(data.message || 'Delete failed.'); }
+                var card = grid.querySelector('[data-photo-id="' + photoId + '"]');
+                if (card) { card.remove(); }
+                setStatus('Photo deleted.', 'ok');
+            })
+            .catch(function (err) { setStatus('Delete failed: ' + err.message, 'error'); });
+    });
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function setStatus(msg, type) {
+        if (!statusEl) { return; }
+        statusEl.textContent = msg;
+        statusEl.style.color = type === 'error' ? '#dc3545' : type === 'ok' ? '#198754' : '#6b7280';
+        if (type !== 'error') { setTimeout(function () { statusEl.textContent = ''; }, 4000); }
+    }
+
+    function escHtml(str) {
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+}());
+</script>
+
+<script>
+// ── Photo Lightbox ────────────────────────────────────────────────────────────
+(function () {
+    var lightbox  = document.getElementById('photoLightbox');
+    var lbImg     = document.getElementById('lightboxImg');
+    var lbCaption = document.getElementById('lightboxCaption');
+    var lbCounter = document.getElementById('lightboxCounter');
+    var lbClose   = document.getElementById('lightboxClose');
+    var lbPrev    = document.getElementById('lightboxPrev');
+    var lbNext    = document.getElementById('lightboxNext');
+    var grid      = document.getElementById('photoGrid');
+    if (!lightbox || !grid) return;
+
+    var photos = []; // { src, caption }
+    var current = 0;
+
+    function collectPhotos() {
+        photos = [];
+        grid.querySelectorAll('.photo-card-thumb').forEach(function (img) {
+            photos.push({ src: img.dataset.lightboxSrc || img.src, caption: img.dataset.lightboxCaption || '' });
+        });
+    }
+
+    function openAt(index) {
+        collectPhotos();
+        if (!photos.length) return;
+        current = Math.max(0, Math.min(index, photos.length - 1));
+        lbImg.src = photos[current].src;
+        lbImg.alt = photos[current].caption;
+        lbCaption.textContent = photos[current].caption;
+        lbCounter.textContent = (current + 1) + ' / ' + photos.length;
+        lightbox.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        lbPrev.style.display = photos.length > 1 ? 'flex' : 'none';
+        lbNext.style.display = photos.length > 1 ? 'flex' : 'none';
+    }
+
+    function close() {
+        lightbox.style.display = 'none';
+        document.body.style.overflow = '';
+        lbImg.src = '';
+    }
+
+    function prev() { openAt(current > 0 ? current - 1 : photos.length - 1); }
+    function next() { openAt(current < photos.length - 1 ? current + 1 : 0); }
+
+    // Click on preview button or thumbnail image
+    grid.addEventListener('click', function (e) {
+        var previewBtn = e.target.closest('.photo-card-preview');
+        var thumb      = e.target.closest('.photo-card-thumb');
+        if (!previewBtn && !thumb) return;
+        if (e.target.closest('.photo-card-delete')) return;
+        collectPhotos();
+        var card  = e.target.closest('.photo-card');
+        var cards = Array.from(grid.querySelectorAll('.photo-card'));
+        var idx   = cards.indexOf(card);
+        openAt(idx >= 0 ? idx : 0);
+    });
+
+    lbClose.addEventListener('click', close);
+    lbPrev.addEventListener('click', prev);
+    lbNext.addEventListener('click', next);
+
+    lightbox.addEventListener('click', function (e) {
+        if (e.target === lightbox) close();
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (lightbox.style.display !== 'flex') return;
+        if (e.key === 'Escape') close();
+        if (e.key === 'ArrowLeft') prev();
+        if (e.key === 'ArrowRight') next();
+    });
 }());
 </script>
 

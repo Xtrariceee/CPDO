@@ -192,7 +192,10 @@ if (!function_exists('twg_initials')) {
 
 if (!function_exists('twg_pdf_safe_text')) {
     function twg_pdf_safe_text(string $text): string {
-        $text = str_replace(['—','–','"','"',''','•','·','₱'],['-','-','"','"',"'",'*','-','PHP'], $text);
+        $search  = ["\xe2\x80\x94", "\xe2\x80\x93", "\xe2\x80\x9c", "\xe2\x80\x9d",
+                    "\xe2\x80\x98", "\xe2\x80\x99", "\xe2\x80\xa2", "\xc2\xb7", "\xe2\x82\xb1"];
+        $replace = ['-', '-', '"', '"', "'", "'", '*', '-', 'PHP'];
+        $text    = str_replace($search, $replace, $text);
         $converted = @iconv('UTF-8', 'Windows-1252//TRANSLIT//IGNORE', $text);
         return $converted !== false ? $converted : preg_replace('/[^\x20-\x7E\r\n\t]/', '?', $text);
     }

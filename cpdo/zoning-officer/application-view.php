@@ -277,6 +277,62 @@ require __DIR__ . '/../partials/header.php';
                 <dt class="col-5">Meeting</dt>
                 <dd class="col-7"><?= e($meetingRow['scheduled_at'] ?? 'Not scheduled') ?></dd>
             </dl>
+
+            <?php if ($inspectionRow && !empty($inspectionRow['findings'])): ?>
+                <hr class="my-3">
+                <h3 class="h6 mb-2">Inspection Report</h3>
+                <details>
+                    <summary class="preview-link" style="cursor:pointer;display:inline-flex;">View Report</summary>
+                    <pre style="margin-top:10px;padding:12px;background:#f4f8fc;border:1px solid #d0dae6;border-radius:8px;font-size:.75rem;white-space:pre-wrap;word-break:break-word;color:#0b2a4a;max-height:320px;overflow-y:auto;"><?= e($inspectionRow['findings']) ?></pre>
+                </details>
+
+                <?php
+                // Show inspection photos if any
+                $photoStmt = db()->prepare(
+                    'SELECT id, caption, category FROM inspection_photos WHERE inspection_id = ? ORDER BY uploaded_at ASC'
+                );
+                $photoStmt->execute([(int)$inspectionRow['id']]);
+                $inspPhotos = $photoStmt->fetchAll();
+                if ($inspPhotos):
+                    $cpdoUrl = rtrim($config['app']['cpdo_url'] ?? '', '/');
+                ?>
+                    <h3 class="h6 mb-2 mt-3">Site Photos (<?= count($inspPhotos) ?>)</h3>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;">
+                        <?php foreach ($inspPhotos as $ph): ?>
+                            <a href="<?= e($cpdoUrl) ?>/twg/inspection_photo.php?id=<?= (int)$ph['id'] ?>" target="_blank" rel="noopener"
+                               style="display:block;border-radius:8px;overflow:hidden;border:1px solid #d0dae6;aspect-ratio:4/3;background:#eef2f7;">
+                                <img src="<?= e($cpdoUrl) ?>/twg/inspection_photo.php?id=<?= (int)$ph['id'] ?>"
+                                     alt="<?= e($ph['caption'] ?: ucwords(str_replace('_', ' ', $ph['category']))) ?>"
+                                     loading="lazy"
+                                     style="width:100%;height:100%;object-fit:cover;display:block;">
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            <?php endif; ?>
+
+            <?php if ($meetingRow && !empty($meetingRow['minutes'])): ?>
+                <hr class="my-3">
+                <h3 class="h6 mb-2">Meeting Minutes</h3>
+                <details>
+                    <summary class="preview-link" style="cursor:pointer;display:inline-flex;">View Minutes</summary>
+                    <pre style="margin-top:10px;padding:12px;background:#f4f8fc;border:1px solid #d0dae6;border-radius:8px;font-size:.75rem;white-space:pre-wrap;word-break:break-word;color:#0b2a4a;max-height:320px;overflow-y:auto;"><?= e($meetingRow['minutes']) ?></pre>
+                </details>
+                <a href="<?= e(rtrim($config['app']['cpdo_url'] ?? '', '/')) ?>/twg/meeting.php?id=<?= (int)$applicationId ?>&download_minutes_pdf=1"
+                   target="_blank" rel="noopener"
+                   class="preview-link mt-2" style="display:inline-flex;">
+                    Download Minutes PDF
+                </a>
+            <?php endif; ?>
+
+            <?php if (in_array($application['phase_status'], ['DELIBERATION', 'APPROVED'], true)): ?>
+                <hr class="my-3">
+                <h3 class="h6 mb-2">Legislative Resolution</h3>
+                <a href="resolution.php?id=<?= (int)$applicationId ?>"
+                   class="preview-link" style="display:inline-flex;">
+                    Generate / Download Resolution PDF
+                </a>
+            <?php endif; ?>
         </section>
     </div>
 </div>

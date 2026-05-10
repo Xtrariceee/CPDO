@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../app/bootstrap_cpdo.php';
 $user = require_role([ROLE_ZONING, ROLE_SYSTEM_ADMIN]);
 
 $underEvaluation = officer_applications(['SUBMITTED', 'PRE_EVALUATION']);
+$paymentPending  = officer_applications(['PAYMENT_PENDING']);
 $paid            = officer_applications(['PAID']);
 $paymentToVerify = [];
 $scheduleReady   = [];
@@ -63,6 +64,13 @@ require __DIR__ . '/../partials/header.php';
         </a>
     </div>
     <div class="col-md-3">
+        <a class="zo-card" href="../admin-officer/order-payment.php">
+            <div class="zo-card-title">Order of Payment</div>
+            <div class="zo-card-count"><?= count($paymentPending) ?></div>
+            <div class="zo-card-note">Applications ready for payment order</div>
+        </a>
+    </div>
+    <div class="col-md-3">
         <a class="zo-card" href="payment-verification.php">
             <div class="zo-card-title">Payment</div>
             <div class="zo-card-count"><?= count($paymentToVerify) ?></div>
@@ -82,6 +90,14 @@ require __DIR__ . '/../partials/header.php';
             <div class="zo-card-note">Edit titles and details shown to landlords</div>
         </a>
     </div>
+    <?php $deliberationApps = officer_applications(['DELIBERATION']); ?>
+    <div class="col-md-3">
+        <a class="zo-card" href="resolution.php">
+            <div class="zo-card-title">Generate Resolution</div>
+            <div class="zo-card-count"><?= count($deliberationApps) ?></div>
+            <div class="zo-card-note">Draft formal legislative resolution PDF</div>
+        </a>
+    </div>
 </div>
 <section class="gov-card p-4">
     <h2 class="h5">Assigned Workflow Status</h2>
@@ -98,6 +114,8 @@ require __DIR__ . '/../partials/header.php';
                     <td>
                         <?php if (in_array($app['phase_status'], ['SUBMITTED','PRE_EVALUATION'], true)): ?>
                             <a class="btn btn-sm btn-primary" href="pre-evaluation.php?id=<?= (int)$app['id'] ?>">Evaluate</a>
+                        <?php elseif ($app['phase_status'] === 'PAYMENT_PENDING'): ?>
+                            <a class="btn btn-sm btn-warning" href="../admin-officer/order-payment.php?id=<?= (int)$app['id'] ?>">Generate OP</a>
                         <?php elseif ($app['phase_status'] === 'PAID'): ?>
                             <?php $rowOrder = payment_order_for_application((int)$app['id']) ?: []; ?>
                             <a class="btn btn-sm btn-primary" href="<?= payment_order_is_verified($rowOrder) ? 'inspection-scheduling' : 'payment-verification' ?>.php?id=<?= (int)$app['id'] ?>"><?= payment_order_is_verified($rowOrder) ? 'Schedule' : 'Verify Payment' ?></a>
@@ -105,6 +123,8 @@ require __DIR__ . '/../partials/header.php';
                             <span class="badge text-bg-warning">Awaiting Payment</span>
                         <?php elseif ($app['phase_status'] === 'FOR_MEETING'): ?>
                             <a class="btn btn-sm btn-outline-primary" href="application-view.php?id=<?= (int)$app['id'] ?>">View</a>
+                        <?php elseif ($app['phase_status'] === 'DELIBERATION'): ?>
+                            <a class="btn btn-sm btn-success" href="resolution.php?id=<?= (int)$app['id'] ?>">Generate Resolution</a>
                         <?php else: ?>
                             <a class="btn btn-sm btn-outline-primary" href="application-view.php?id=<?= (int)$app['id'] ?>">View</a>
                         <?php endif; ?>

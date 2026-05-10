@@ -127,7 +127,7 @@ function send_otp_email(string $toEmail, string $toName, string $otp): bool
         $mail = build_mailer();
 
         $mail->addAddress($toEmail, $toName);
-        $mail->Subject = 'Your CPDO Portal verification code';
+        $mail->Subject = 'Your RentEase verification code';
         $mail->isHTML(true);
 
         $safeOtp  = htmlspecialchars($otp,    ENT_QUOTES, 'UTF-8');
@@ -136,35 +136,79 @@ function send_otp_email(string $toEmail, string $toName, string $otp): bool
         $mail->Body = <<<HTML
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"></head>
-<body style="font-family:Inter,Arial,sans-serif;background:#f4f7fb;margin:0;padding:32px 0;">
-  <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:14px;
-              box-shadow:0 4px 16px rgba(0,0,0,.07);overflow:hidden;">
-    <div style="background:#0b2a4a;padding:24px 32px;">
-      <span style="color:#fff;font-size:1.2rem;font-weight:900;">CPDO Land Portal</span>
-    </div>
-    <div style="padding:32px;">
-      <p style="margin:0 0 12px;color:#121212;">Hello {$safeName},</p>
-      <p style="margin:0 0 24px;color:#62748a;">
-        Use the code below to verify your email address.
-        It expires in <strong>5 minutes</strong>.
-      </p>
-      <div style="text-align:center;margin:0 0 24px;">
-        <span style="display:inline-block;font-size:2.4rem;font-weight:900;
-                     letter-spacing:.35em;color:#0b2a4a;background:#eaf4ff;
-                     border-radius:10px;padding:16px 28px;">{$safeOtp}</span>
-      </div>
-      <p style="margin:0;color:#62748a;font-size:.88rem;">
-        If you did not request this code, you can safely ignore this email.
-      </p>
-    </div>
-  </div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background:#f5f0e8;font-family:Inter,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f0e8;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:480px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 8px 32px rgba(36,27,11,0.10);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:#241b0b;padding:28px 36px;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td>
+                    <span style="display:inline-flex;align-items:center;gap:10px;">
+                      <span style="display:inline-block;width:36px;height:36px;border-radius:50%;background:#f6cf4a;text-align:center;line-height:36px;font-size:14px;font-weight:900;color:#241b0b;">RE</span>
+                      <span style="color:#f6cf4a;font-size:1.15rem;font-weight:900;letter-spacing:-.01em;">RentEase</span>
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 36px 28px;">
+              <p style="margin:0 0 8px;font-size:1.05rem;font-weight:800;color:#241b0b;">Hello, {$safeName}</p>
+              <p style="margin:0 0 28px;color:#76684b;font-size:.92rem;line-height:1.65;">
+                Use the verification code below to confirm your email address.
+                This code expires in <strong style="color:#241b0b;">5 minutes</strong>.
+              </p>
+
+              <!-- OTP box -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                <tr>
+                  <td align="center">
+                    <div style="display:inline-block;background:#fff7d6;border:2px solid #f0dfad;border-radius:14px;padding:20px 36px;">
+                      <span style="font-size:2.6rem;font-weight:900;letter-spacing:.35em;color:#241b0b;font-variant-numeric:tabular-nums;">{$safeOtp}</span>
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0;color:#a89562;font-size:.82rem;line-height:1.6;">
+                If you did not request this code, you can safely ignore this email.
+                Someone may have entered your email address by mistake.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#fffdf5;border-top:1px solid #f0dfad;padding:18px 36px;">
+              <p style="margin:0;font-size:.75rem;color:#a89562;line-height:1.5;">
+                © <?= date('Y') ?> RentEase &mdash; Rental Management System<br>
+                This is an automated message. Please do not reply.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>
 HTML;
         $mail->AltBody =
             "Hello {$toName},\n\n"
-            . "Your CPDO Portal verification code is: {$otp}\n\n"
+            . "Your RentEase verification code is: {$otp}\n\n"
             . "This code expires in 5 minutes.\n\n"
             . "If you did not request this, ignore this email.";
 

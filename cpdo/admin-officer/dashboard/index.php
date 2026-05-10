@@ -2,9 +2,8 @@
 require_once __DIR__ . '/../../../app/bootstrap_cpdo.php';
 $user = require_role([ROLE_ADMIN_OFFICER, ROLE_SYSTEM_ADMIN]);
 
-$forPayment  = officer_applications(['PRE_EVALUATION', 'SUBMITTED']);
-$forFinal    = officer_applications(['DELIBERATION']);
-$skipPending = db()->query('SELECT * FROM compliance_uploads WHERE status="PENDING_VERIFICATION" ORDER BY created_at DESC')->fetchAll();
+$forResolution = officer_applications(['DELIBERATION']);
+$skipPending   = db()->query('SELECT * FROM compliance_uploads WHERE status="PENDING_VERIFICATION" ORDER BY created_at DESC')->fetchAll();
 
 require __DIR__ . '/../../partials/header.php';
 ?>
@@ -46,25 +45,18 @@ require __DIR__ . '/../../partials/header.php';
 }
 </style>
 <div class="row g-3 mb-4">
-    <div class="col-md-4">
-        <a class="zo-card" href="../order-payment.php">
-            <div class="zo-card-title">Order of Payment</div>
-            <div class="zo-card-count"><?= count($forPayment) ?></div>
-            <div class="zo-card-note">Applications awaiting order of payment</div>
-        </a>
-    </div>
-    <div class="col-md-4">
+    <div class="col-md-6">
         <a class="zo-card" href="../final-output.php">
-            <div class="zo-card-title">Final Output</div>
-            <div class="zo-card-count"><?= count($forFinal) ?></div>
-            <div class="zo-card-note">Applications ready for final resolution</div>
+            <div class="zo-card-title">Validate Resolution &amp; Endorsement</div>
+            <div class="zo-card-count"><?= count($forResolution) ?></div>
+            <div class="zo-card-note">Applications deliberated — generate endorsement &amp; notify landlord</div>
         </a>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-6">
         <a class="zo-card" href="../skip-verification.php">
             <div class="zo-card-title">Skip Path Verification</div>
             <div class="zo-card-count"><?= count($skipPending) ?></div>
-            <div class="zo-card-note">Compliance uploads pending review</div>
+            <div class="zo-card-note">Compliance uploads pending document review</div>
         </a>
     </div>
 </div>
@@ -74,12 +66,12 @@ require __DIR__ . '/../../partials/header.php';
         <table class="table align-middle">
             <thead><tr><th>Type</th><th>Record</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>
-            <?php foreach ($forPayment as $app): ?>
+            <?php foreach ($forResolution as $app): ?>
                 <tr>
                     <td>CPDO Application</td>
                     <td><?= e($app['registry_number']) ?> · <?= e($app['property_title']) ?></td>
                     <td><?= e(workflow_status_label($app['phase_status'])) ?></td>
-                    <td><a class="btn btn-sm btn-primary" href="../order-payment.php?id=<?= (int)$app['id'] ?>">Generate OP</a></td>
+                    <td><a class="btn btn-sm btn-primary" href="../final-output.php?id=<?= (int)$app['id'] ?>">Validate &amp; Endorse</a></td>
                 </tr>
             <?php endforeach; ?>
             <?php foreach ($skipPending as $upload): ?>

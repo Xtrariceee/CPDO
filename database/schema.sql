@@ -27,6 +27,7 @@ DROP TABLE IF EXISTS compliance_uploads;
 DROP TABLE IF EXISTS final_outputs;
 DROP TABLE IF EXISTS votes;
 DROP TABLE IF EXISTS meetings;
+DROP TABLE IF EXISTS inspection_photos;
 DROP TABLE IF EXISTS inspections;
 DROP TABLE IF EXISTS payment_orders;
 DROP TABLE IF EXISTS requirement_documents;
@@ -64,6 +65,9 @@ CREATE TABLE users (
     status                 ENUM('ACTIVE','DISABLED') NOT NULL DEFAULT 'ACTIVE',
     otp_code               VARCHAR(6)   NULL,
     otp_expiry             DATETIME     NULL,
+    phone_number           VARCHAR(20)  NULL,
+    date_of_birth          DATE         NULL,
+    gender                 ENUM('male','female','prefer_not_to_say') NULL,
     is_verified            TINYINT(1)   NOT NULL DEFAULT 0,
     created_at             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -85,7 +89,7 @@ CREATE TABLE users (
 --   corporation_name, representative_name, type_of_project, lot_area,
 --   building_area, project_cost, nature_of_application (+_other),
 --   right_over_land, existing_land_use (+_other), sworn_statement,
---   vicinity_map_pdf_path
+--   vicinity_map_pdf_path, land_polygon_geojson, land_polygon_area_sqm
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE applications (
     id                           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -122,6 +126,8 @@ CREATE TABLE applications (
     property_title               VARCHAR(190)  NOT NULL,
     property_address             TEXT          NOT NULL,
     coordinates                  VARCHAR(120)  NULL,
+    land_polygon_geojson         MEDIUMTEXT    NULL,   -- GeoJSON polygon drawn by applicant
+    land_polygon_area_sqm        DECIMAL(14,2) NULL,   -- computed area in sqm
 
     -- ── Encrypted sensitive field ────────────────────────────────────────────
     sensitive_land_title_enc     TEXT          NULL,
@@ -278,6 +284,43 @@ CREATE TABLE inspections (
         ON UPDATE CASCADE ON DELETE SET NULL,
     INDEX idx_inspections_schedule (scheduled_at),
     INDEX idx_inspections_schedule_parts (scheduled_date, scheduled_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- INSPECTION PHOTOS
+-- Site photos uploaded by TWG members during field inspection.
+-- Stored as binary blobs; caption and category are optional metadata.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE inspection_photos (
+    id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    inspection_id  BIGINT UNSIGNED NOT NULL,
+    application_id BIGINT UNSIGNED NOT NULL,
+    uploaded_by    BIGINT UNSIGNED NOT NULL,
+    file_data      LONGBLOB     NOT NULL,
+    file_mime      VARCHAR(80)  NOT NULL,
+    file_size      INT UNSIGNED NOT NULL DEFAULT 0,
+    caption        VARCHAR(255) NULL,
+    category       ENUM(
+                       'frontage',
+                       'road_access',
+                       'lot_view',
+                       'adjacent_uses',
+                       'existing_structures',
+                       'issue_area',
+                       'other'
+                   ) NOT NULL DEFAULT 'other',
+    uploaded_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_photos_inspection
+        FOREIGN KEY (inspection_id) REFERENCES inspections(id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_photos_application
+        FOREIGN KEY (application_id) REFERENCES applications(id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_photos_uploader
+        FOREIGN KEY (uploaded_by) REFERENCES users(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    INDEX idx_photos_inspection  (inspection_id),
+    INDEX idx_photos_application (application_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ─────────────────────────────────────────────────────────────────────────────

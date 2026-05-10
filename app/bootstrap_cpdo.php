@@ -41,5 +41,6 @@ require_once __DIR__ . '/workflow.php';
 require_once __DIR__ . '/officer_workflow.php';
 require_once __DIR__ . '/mailer.php';
 require_once __DIR__ . '/vicinity_map_pdf.php';
+require_once __DIR__ . '/resolution_pdf.php';
 
 enforce_session_timeout((int)$config['app']['session_timeout_seconds']);

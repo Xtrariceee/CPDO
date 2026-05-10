@@ -9,10 +9,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email           = strtolower(trim($_POST['email'] ?? ''));
     $password        = $_POST['password'] ?? '';
     $confirmPassword = $_POST['confirm_password'] ?? '';
+    $phoneNumber     = trim($_POST['phone_number'] ?? '');
+    $dateOfBirth     = trim($_POST['date_of_birth'] ?? '');
+    $gender          = trim($_POST['gender'] ?? '');
     $agreed          = isset($_POST['terms']);
+
+    // Normalize phone: input is 10-digit local number (9XXXXXXXXX), prepend +63
+    if ($phoneNumber && !str_starts_with($phoneNumber, '+')) {
+        $phoneNumber = '+63' . ltrim($phoneNumber, '0');
+    }
+
+    // Validate Philippine mobile number: +63 followed by 10 digits (starts with 9)
+    $phoneValid = preg_match('/^\+639\d{9}$/', $phoneNumber);
+
+    // Validate date of birth and age >= 18
+    $dobValid = false;
+    $ageValid = false;
+    if ($dateOfBirth) {
+        $dob = DateTime::createFromFormat('Y-m-d', $dateOfBirth);
+        if ($dob && $dob->format('Y-m-d') === $dateOfBirth) {
+            $dobValid = true;
+            $today    = new DateTime();
+            $age      = $today->diff($dob)->y;
+            $ageValid = $age >= 18;
+        }
+    }
+
+    $validGenders = ['male', 'female', 'prefer_not_to_say'];
 
     if (!$firstName || !$lastName || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $_SESSION['flash_error'] = 'Please provide valid registration details.';
+    } elseif (!$phoneValid) {
+        $_SESSION['flash_error'] = 'Please enter a valid Philippine mobile number (e.g. +639XXXXXXXXX).';
+    } elseif (!$dobValid) {
+        $_SESSION['flash_error'] = 'Please enter a valid date of birth.';
+    } elseif (!$ageValid) {
+        $_SESSION['flash_error'] = 'You must be at least 18 years old to register.';
+    } elseif (!in_array($gender, $validGenders, true)) {
+        $_SESSION['flash_error'] = 'Please select a valid gender.';
     } elseif ($password !== $confirmPassword) {
         $_SESSION['flash_error'] = 'Password and confirm password must match.';
     } elseif (!password_is_strong($password)) {
@@ -22,12 +56,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $pdo  = db();
         $stmt = $pdo->prepare(
-            'INSERT INTO users (first_name, middle_name, last_name, email, password_hash, role, is_verified)
-             VALUES (?, ?, ?, ?, ?, ?, 0)'
+            'INSERT INTO users (first_name, middle_name, last_name, email, password_hash, role, phone_number, date_of_birth, gender, is_verified)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)'
         );
         try {
             $stmt->execute([$firstName, $middleName ?: null, $lastName, $email,
-                            password_hash($password, PASSWORD_BCRYPT), ROLE_TENANT]);
+                            password_hash($password, PASSWORD_BCRYPT), ROLE_TENANT,
+                            $phoneNumber, $dateOfBirth, $gender]);
             $userId      = (int)$pdo->lastInsertId();
             $displayName = trim($firstName . ' ' . $lastName);
             $otpSent     = issue_user_otp($userId, $email, $displayName);
@@ -122,6 +157,22 @@ $flashSuccess = $_SESSION['flash_success'] ?? null; unset($_SESSION['flash_succe
         .re-glass-card .form-control:focus { background: #fff; border-color: #e6b82f; box-shadow: 0 0 0 3px rgba(246,207,74,.28); color: #241b0b; outline: none; }
         .re-glass-card .pw-toggle { color: #a89562; }
         .re-glass-card .pw-toggle:hover { color: #241b0b; }
+
+        /* Phone prefix group */
+        .re-glass-card .input-group .input-group-text {
+            background: #fffdf5; border: 1px solid #f0dfad; border-right: 0;
+            border-radius: 10px 0 0 10px; color: #3a2d12; font-size: .9rem; font-weight: 600;
+        }
+        .re-glass-card .input-group .form-control {
+            border-left: 0; border-radius: 0 10px 10px 0;
+        }
+        .re-glass-card .input-group .form-control:focus {
+            border-color: #e6b82f; box-shadow: 0 0 0 3px rgba(246,207,74,.28);
+        }
+
+        /* Date & select */
+        .re-glass-card select.form-control { cursor: pointer; }
+        .re-glass-card input[type="date"].form-control { cursor: pointer; }
 
         /* Password meter inside glass */
         .re-glass-card .password-meter { margin-top: 10px; }
@@ -231,6 +282,38 @@ $flashSuccess = $_SESSION['flash_success'] ?? null; unset($_SESSION['flash_succe
                 </div>
 
                 <div class="mb-3">
+                    <label class="form-label" for="reg-phone">Phone Number</label>
+                    <div class="input-group">
+                        <span class="input-group-text" style="background:#fffdf5;border:1px solid #f0dfad;border-right:0;border-radius:10px 0 0 10px;color:#3a2d12;font-size:.9rem;font-weight:600;">+63</span>
+                        <input class="form-control" type="tel" id="reg-phone" name="phone_number"
+                               required autocomplete="tel" placeholder="9XXXXXXXXX"
+                               maxlength="10" pattern="9[0-9]{9}"
+                               style="border-left:0;border-radius:0 10px 10px 0;">
+                    </div>
+                    <div class="form-text" style="color:#a89562;font-size:.75rem;margin-top:4px;">Philippine mobile number (e.g. 9171234567)</div>
+                </div>
+
+                <!-- Date of Birth & Gender row -->
+                <div class="re-name-grid mb-3">
+                    <div>
+                        <label class="form-label" for="reg-dob">Date of Birth</label>
+                        <input class="form-control" type="date" id="reg-dob" name="date_of_birth"
+                               required autocomplete="bday"
+                               max="<?= date('Y-m-d', strtotime('-18 years')) ?>">
+                        <div class="form-text" style="color:#a89562;font-size:.75rem;margin-top:4px;">Must be 18 years or older.</div>
+                    </div>
+                    <div>
+                        <label class="form-label" for="reg-gender">Gender</label>
+                        <select class="form-control" id="reg-gender" name="gender" required>
+                            <option value="" disabled selected>Select gender</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="prefer_not_to_say">Prefer not to say</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mb-3">
                     <label class="form-label" for="reg-email">Email Address</label>
                     <input class="form-control" type="email" id="reg-email" name="email" required autocomplete="email" placeholder="you@example.com">
                 </div>
@@ -337,6 +420,67 @@ document.querySelectorAll('.pw-toggle').forEach(function(btn) {
         btn.querySelector('.pw-eye-hide').style.display = isText ? 'none' : '';
         btn.setAttribute('aria-label', isText ? 'Show password' : 'Hide password');
     });
+});
+
+// Philippine phone number: strip leading +63 or 0 if user pastes full number
+const phoneInput = document.getElementById('reg-phone');
+if (phoneInput) {
+    phoneInput.addEventListener('input', function() {
+        // Allow only digits
+        this.value = this.value.replace(/\D/g, '');
+        // If user pasted something like 09171234567 or 639171234567, strip prefix
+        if (this.value.startsWith('63')) this.value = this.value.slice(2);
+        if (this.value.startsWith('0'))  this.value = this.value.slice(1);
+        if (this.value.length > 10) this.value = this.value.slice(0, 10);
+    });
+}
+
+// Client-side age validation feedback
+const dobInput = document.getElementById('reg-dob');
+if (dobInput) {
+    dobInput.addEventListener('change', function() {
+        const val = this.value;
+        if (!val) return;
+        const dob   = new Date(val);
+        const today = new Date();
+        let age = today.getFullYear() - dob.getFullYear();
+        const m = today.getMonth() - dob.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+        const hint = this.closest('.mb-3') ? this.closest('.mb-3').querySelector('.form-text') : null;
+        if (hint) {
+            if (age < 18) {
+                hint.textContent = 'You must be at least 18 years old to register.';
+                hint.style.color = '#f87171';
+            } else {
+                hint.textContent = 'Must be 18 years or older.';
+                hint.style.color = '#a89562';
+            }
+        }
+    });
+}
+
+// Pre-submit client-side guard
+document.querySelector('form').addEventListener('submit', function(e) {
+    // Phone check
+    if (phoneInput && !/^9\d{9}$/.test(phoneInput.value)) {
+        e.preventDefault();
+        alert('Please enter a valid Philippine mobile number starting with 9 (10 digits total).');
+        phoneInput.focus();
+        return;
+    }
+    // Age check
+    if (dobInput && dobInput.value) {
+        const dob   = new Date(dobInput.value);
+        const today = new Date();
+        let age = today.getFullYear() - dob.getFullYear();
+        const m = today.getMonth() - dob.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+        if (age < 18) {
+            e.preventDefault();
+            alert('You must be at least 18 years old to register.');
+            dobInput.focus();
+        }
+    }
 });
 </script>
 </body>

@@ -18,7 +18,13 @@ if ($propertyId) {
 }
 
 if (!$property && $status['state'] !== 'ELIGIBLE') {
-    $_SESSION['flash_error'] = 'Property listing creation is blocked until CPDO approval or Administrative Officer verification.';
+    $_SESSION['flash_error'] = 'You cannot add a property listing yet. Please complete CPDO zoning approval and document verification first.';
+    redirect('landlord/compliance-gateway.php');
+}
+
+// Even for editing, block if somehow not eligible (extra safety)
+if ($property && $status['state'] !== 'ELIGIBLE') {
+    $_SESSION['flash_error'] = 'Property listing management is locked until CPDO approval and Admin Officer verification are complete.';
     redirect('landlord/compliance-gateway.php');
 }
 

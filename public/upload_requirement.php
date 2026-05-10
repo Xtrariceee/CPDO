@@ -47,7 +47,46 @@ try {
         $encryptedName['nonce'],
         (int)$document['id'],
     ]);
-    audit_log((int)$user['id'], 'REQUIREMENT_AUTOSAVED', 'requirement_documents', (int)$document['id']);
+
+    // ── If this document was previously FAILED, reset it to PENDING and
+    //    notify all active Zoning Officers so they know to re-evaluate. ────────
+    $wasFailed = ($document['evaluation_status'] ?? '') === 'FAILED';
+    if ($wasFailed) {
+        db()->prepare(
+            'UPDATE requirement_documents
+             SET evaluation_status = "PENDING", officer_notes = NULL,
+                 evaluated_by = NULL, evaluated_at = NULL
+             WHERE id = ?'
+        )->execute([(int)$document['id']]);
+
+        // Fetch application details for the notification message
+        $appInfo = db()->prepare(
+            'SELECT a.registry_number, a.property_title,
+                    CONCAT_WS(" ", u.first_name, u.last_name) AS landlord_name
+             FROM applications a
+             JOIN users u ON u.id = a.landlord_id
+             WHERE a.id = ?'
+        );
+        $appInfo->execute([$applicationId]);
+        $appRow = $appInfo->fetch();
+
+        $notifTitle = 'Document Re-uploaded: ' . ($document['title'] ?? $requirementKey);
+        $notifMsg   = sprintf(
+            'Applicant %s has re-uploaded "%s" for application %s (%s). The document has been reset to Pending and is ready for re-evaluation.',
+            $appRow['landlord_name']   ?? 'Applicant',
+            $document['title']         ?? $requirementKey,
+            $appRow['registry_number'] ?? '',
+            $appRow['property_title']  ?? ''
+        );
+
+        notify_role(ROLE_ZONING, $applicationId, $notifTitle, $notifMsg);
+        audit_log((int)$user['id'], 'FAILED_DOC_REUPLOADED', 'requirement_documents', (int)$document['id'], [
+            'requirement_key' => $requirementKey,
+            'application_id'  => $applicationId,
+        ]);
+    } else {
+        audit_log((int)$user['id'], 'REQUIREMENT_AUTOSAVED', 'requirement_documents', (int)$document['id']);
+    }
 
     echo json_encode([
         'ok'          => true,

@@ -30,7 +30,7 @@ function required_documents(): array
             ],
             'vicinity_map'          => [
                 'title'   => 'Vicinity Map',
-                'details' => 'This PDF is generated automatically from the pinned property location in the application form. Review the generated map before submitting.',
+                'details' => 'This PDF is generated automatically from the drawn land boundary polygon in the application form. Review the generated map before submitting.',
             ],
             'affidavit_neighbor'    => [
                 'title'   => 'Affidavit of Neighbor\'s Consent',
@@ -124,6 +124,7 @@ function create_application(int $landlordId, array $data): int
             account_name, account_address,
             corporation_name, representative_name,
             property_title, property_address, coordinates,
+            land_polygon_geojson, land_polygon_area_sqm,
             type_of_project, lot_area, building_area, project_cost,
             nature_of_application, nature_of_application_other,
             right_over_land,
@@ -135,6 +136,7 @@ function create_application(int $landlordId, array $data): int
             ?, ?,
             ?, ?,
             ?, ?, ?,
+            ?, ?,
             ?, ?, ?, ?,
             ?, ?,
             ?,
@@ -159,6 +161,8 @@ function create_application(int $landlordId, array $data): int
         trim($data['property_title']),
         trim($data['property_address']),
         trim($data['coordinates'] ?? '') ?: null,
+        trim($data['land_polygon_geojson']  ?? '') ?: null,
+        is_numeric($data['land_polygon_area_sqm'] ?? '') ? (float)$data['land_polygon_area_sqm'] : null,
         trim($data['type_of_project']    ?? '') ?: null,
         is_numeric($data['lot_area']      ?? '') ? (float)$data['lot_area']      : null,
         is_numeric($data['building_area'] ?? '') ? (float)$data['building_area'] : null,
@@ -183,9 +187,48 @@ function create_application(int $landlordId, array $data): int
 
     seed_requirement_rows($applicationId);
 
-    // ── Generate vicinity map PDF if coordinates were provided ───────────────
+    // ── Generate vicinity map PDF from drawn land boundary centroid ─────────
+    // Primary: explicit latitude/longitude hidden inputs (written by the polygon JS).
+    // Fallback: parse the "lat, lng" string stored in coordinates.
     $lat = is_numeric($data['latitude']  ?? '') ? (float)$data['latitude']  : null;
     $lng = is_numeric($data['longitude'] ?? '') ? (float)$data['longitude'] : null;
+
+    if (($lat === null || $lng === null) && !empty($data['coordinates'])) {
+        $parts = explode(',', (string)$data['coordinates']);
+        if (count($parts) === 2) {
+            $parsedLat = trim($parts[0]);
+            $parsedLng = trim($parts[1]);
+            if (is_numeric($parsedLat) && is_numeric($parsedLng)) {
+                $lat = (float)$parsedLat;
+                $lng = (float)$parsedLng;
+            }
+        }
+    }
+
+    // Last resort: derive centroid from the GeoJSON polygon itself
+    if (($lat === null || $lng === null) && !empty($data['land_polygon_geojson'])) {
+        try {
+            $gj = json_decode((string)$data['land_polygon_geojson'], true);
+            $coords = null;
+            // FeatureCollection → first Feature → Polygon coordinates[0]
+            if (isset($gj['features'][0]['geometry']['coordinates'][0])) {
+                $coords = $gj['features'][0]['geometry']['coordinates'][0];
+            } elseif (isset($gj['geometry']['coordinates'][0])) {
+                $coords = $gj['geometry']['coordinates'][0];
+            } elseif (isset($gj['coordinates'][0])) {
+                $coords = $gj['coordinates'][0];
+            }
+            if (is_array($coords) && count($coords) > 0) {
+                $sumLat = 0.0; $sumLng = 0.0; $n = count($coords);
+                foreach ($coords as $pt) {
+                    $sumLng += (float)$pt[0];
+                    $sumLat += (float)$pt[1];
+                }
+                $lat = $sumLat / $n;
+                $lng = $sumLng / $n;
+            }
+        } catch (Throwable $e) { /* ignore malformed GeoJSON */ }
+    }
 
     if ($lat !== null && $lng !== null) {
         try {

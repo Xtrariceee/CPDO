@@ -9,6 +9,11 @@ config/env.php
 /storage/uploads/*
 !/storage/uploads/.gitkeep
 
+# ── Generated / downloaded assets (not source code) ───────────
+/storage/cacert.pem
+/storage/vicinity_maps/
+/storage/tmp/
+
 # ── OS & editor noise ──────────────────────────────────────────
 .DS_Store
 Thumbs.db

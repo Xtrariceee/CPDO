@@ -1,9 +1,11 @@
 <?php
 require_once __DIR__ . '/../../app/bootstrap.php';
+
 $user = require_role([ROLE_LANDLORD]);
 verify_csrf();
 
 $applicationId = (int)($_GET['id'] ?? $_POST['application_id'] ?? 0);
+
 $appStmt = db()->prepare('SELECT * FROM applications WHERE id = ? AND landlord_id = ?');
 $appStmt->execute([$applicationId, (int)$user['id']]);
 $application = $appStmt->fetch();
@@ -11,6 +13,96 @@ $application = $appStmt->fetch();
 if (!$application) {
     http_response_code(404);
     exit('Application not found.');
+}
+
+// ── On-demand vicinity map generation ────────────────────────────────────────
+// Triggered when the landlord clicks "Generate Now" on this page.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'generate_vicinity_map') {
+    verify_csrf();
+
+    // Resolve centroid: prefer stored coordinates, fall back to GeoJSON centroid
+    $lat = null;
+    $lng = null;
+
+    if (!empty($application['coordinates'])) {
+        $parts = explode(',', (string)$application['coordinates']);
+        if (count($parts) === 2) {
+            $pLat = trim($parts[0]);
+            $pLng = trim($parts[1]);
+            if (is_numeric($pLat) && is_numeric($pLng)) {
+                $lat = (float)$pLat;
+                $lng = (float)$pLng;
+            }
+        }
+    }
+
+    if (($lat === null || $lng === null) && !empty($application['land_polygon_geojson'])) {
+        try {
+            $gj     = json_decode((string)$application['land_polygon_geojson'], true);
+            $coords = null;
+            if (isset($gj['features'][0]['geometry']['coordinates'][0])) {
+                $coords = $gj['features'][0]['geometry']['coordinates'][0];
+            } elseif (isset($gj['geometry']['coordinates'][0])) {
+                $coords = $gj['geometry']['coordinates'][0];
+            } elseif (isset($gj['coordinates'][0])) {
+                $coords = $gj['coordinates'][0];
+            }
+            if (is_array($coords) && count($coords) > 0) {
+                $sumLat = 0.0; $sumLng = 0.0; $n = count($coords);
+                foreach ($coords as $pt) { $sumLng += (float)$pt[0]; $sumLat += (float)$pt[1]; }
+                $lat = $sumLat / $n;
+                $lng = $sumLng / $n;
+            }
+        } catch (Throwable $e) { /* ignore */ }
+    }
+
+    if ($lat === null || $lng === null) {
+        $_SESSION['flash_error'] = 'No land boundary or coordinates found. Please draw the boundary on the application form first.';
+        redirect('landlord/requirements-upload.php?id=' . $applicationId);
+    }
+
+    try {
+        $pdfPath = generate_vicinity_map_pdf(
+            lat:            $lat,
+            lng:            $lng,
+            applicantName:  $application['account_name'],
+            projectName:    $application['property_title'],
+            registryNumber: $application['registry_number']
+        );
+
+        $pdo = db();
+
+        // Store path on application
+        $pdo->prepare('UPDATE applications SET vicinity_map_pdf_path = ? WHERE id = ?')
+            ->execute([$pdfPath, $applicationId]);
+
+        // Attach PDF bytes to the requirement_documents row
+        $absPath  = __DIR__ . '/../../' . $pdfPath;
+        $pdfBytes = is_file($absPath) ? file_get_contents($absPath) : false;
+
+        if ($pdfBytes !== false) {
+            $encName = encrypt_sensitive('vicinity_map_generated.pdf');
+            $pdo->prepare(
+                'UPDATE requirement_documents
+                 SET file_data = ?, file_mime = "application/pdf", file_path = NULL,
+                     original_name_enc = ?, original_name_nonce = ?, uploaded_at = NOW()
+                 WHERE application_id = ? AND requirement_key = "vicinity_map"'
+            )->execute([
+                $pdfBytes,
+                $encName['ciphertext'],
+                $encName['nonce'],
+                $applicationId,
+            ]);
+        }
+
+        audit_log((int)$user['id'], 'VICINITY_MAP_PDF_GENERATED', 'applications', $applicationId);
+        $_SESSION['flash_success'] = 'Vicinity Map PDF generated successfully.';
+    } catch (Throwable $e) {
+        audit_log((int)$user['id'], 'VICINITY_MAP_PDF_FAILED', 'applications', $applicationId, ['error' => $e->getMessage()]);
+        $_SESSION['flash_error'] = 'Could not generate the Vicinity Map PDF: ' . $e->getMessage();
+    }
+
+    redirect('landlord/requirements-upload.php?id=' . $applicationId);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -35,9 +127,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             continue;
         }
 
+        $uploadField = null;
+
         if (!empty($_FILES[$key]['name']) && $_FILES[$key]['error'] === UPLOAD_ERR_OK) {
-            $upload        = read_upload_for_db($_FILES[$key]);
-            $encryptedName = encrypt_sensitive($_FILES[$key]['name']);
+            $uploadField = $_FILES[$key];
+        } elseif (!empty($_FILES[$key . '_camera']['name']) && $_FILES[$key . '_camera']['error'] === UPLOAD_ERR_OK) {
+            $uploadField = $_FILES[$key . '_camera'];
+        }
+
+        if ($uploadField) {
+            $upload        = read_upload_for_db($uploadField);
+            $encryptedName = encrypt_sensitive($uploadField['name']);
 
             $update->execute([
                 $upload['file_data'],
@@ -77,10 +177,18 @@ $docsStmt = db()->prepare('SELECT * FROM requirement_documents WHERE application
 $docsStmt->execute([$applicationId]);
 $documents = $docsStmt->fetchAll();
 
-$totalDocs    = count($documents);
-$uploadedDocs = count(array_filter($documents, fn($d) => !empty($d['file_data']) || !empty($d['file_path'])));
+$totalDocs = count($documents);
 
-// Build a lookup of effective details
+$uploadedDocs = count(array_filter($documents, function ($doc) use ($application) {
+    if ($doc['requirement_key'] === 'vicinity_map') {
+        return !empty($doc['file_data'])
+            || !empty($doc['file_path'])
+            || !empty($application['vicinity_map_pdf_path']);
+    }
+
+    return !empty($doc['file_data']) || !empty($doc['file_path']);
+}));
+
 $effectiveReqs = effective_requirements();
 $detailsLookup = [];
 
@@ -89,6 +197,10 @@ foreach ($effectiveReqs as $group => $docs) {
         $detailsLookup[$key] = $doc;
     }
 }
+
+// Page-level flag: does this application already have a polygon / coordinates?
+$polygonDrawn = !empty($application['land_polygon_geojson'])
+             || !empty($application['coordinates']);
 
 require __DIR__ . '/../partials/header.php';
 ?>
@@ -125,6 +237,34 @@ require __DIR__ . '/../partials/header.php';
         </a>
     </div>
 </div>
+
+<!-- Failed documents banner -->
+<?php
+$failedDocs = array_filter($documents, fn($d) => ($d['evaluation_status'] ?? '') === 'FAILED');
+if ($failedDocs):
+?>
+<div class="failed-docs-banner" id="failed-docs-banner">
+    <div class="failed-docs-banner-icon" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/></svg>
+    </div>
+    <div class="failed-docs-banner-body">
+        <strong><?= count($failedDocs) ?> document<?= count($failedDocs) > 1 ? 's' : '' ?> failed evaluation</strong>
+        <span>The officer has flagged the following documents for re-upload:</span>
+        <ul class="failed-docs-list">
+            <?php foreach ($failedDocs as $fd): ?>
+                <li>
+                    <a href="#doc-<?= (int)$fd['id'] ?>" class="failed-doc-link">
+                        <?= e($fd['title']) ?>
+                    </a>
+                    <?php if (trim($fd['officer_notes'] ?? '')): ?>
+                        — <em><?= e($fd['officer_notes']) ?></em>
+                    <?php endif; ?>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- Progress -->
 <div class="gov-card p-3 mb-4">
@@ -167,15 +307,48 @@ require __DIR__ . '/../partials/header.php';
         <?php endif; ?>
 
         <?php
-            $hasFile    = !empty($doc['file_data']) || !empty($doc['file_path']);
             $isVicinity = $doc['requirement_key'] === 'vicinity_map';
+
+            $hasFile = !empty($doc['file_data']) || !empty($doc['file_path']);
+
+            if ($isVicinity && !empty($application['vicinity_map_pdf_path'])) {
+                $hasFile = true;
+            }
+
+            $evalStatus  = $doc['evaluation_status'] ?? 'PENDING'; // PENDING | PASSED | FAILED
+            $officerNote = trim($doc['officer_notes'] ?? '');
+            $isFailed    = $evalStatus === 'FAILED';
+            $isPassed    = $evalStatus === 'PASSED';
+
+            $previewUrl = '';
+
+            if ($hasFile) {
+                if ($isVicinity) {
+                    $previewUrl = rtrim($config['app']['base_url'], '/') . '/vicinity_map_preview.php?id=' . (int)$applicationId;
+                } else {
+                    $previewUrl = rtrim($config['app']['base_url'], '/') . '/document_preview.php?id=' . (int)$doc['id'];
+                }
+            }
+
+            $previewType = $hasFile
+                ? ($isVicinity ? 'application/pdf' : ($doc['file_mime'] ?? 'application/pdf'))
+                : '';
+
             $reqDetails = $detailsLookup[$doc['requirement_key']] ?? null;
             $detailText = $reqDetails['details'] ?? null;
+
+            // Row CSS classes
+            $rowClasses = 'upload-row';
+            if ($isFailed)       $rowClasses .= ' is-failed';
+            elseif ($isPassed)   $rowClasses .= ' is-passed';
+            elseif ($hasFile)    $rowClasses .= ' is-uploaded';
         ?>
 
         <div
-            class="upload-row <?= $hasFile ? 'is-uploaded' : '' ?>"
+            id="doc-<?= (int)$doc['id'] ?>"
+            class="<?= $rowClasses ?>"
             data-upload-row
+            <?= $isFailed ? 'data-failed' : '' ?>
             data-requirement-key="<?= e($doc['requirement_key']) ?>"
             data-doc-id="<?= (int)$doc['id'] ?>"
         >
@@ -191,6 +364,29 @@ require __DIR__ . '/../partials/header.php';
                     >
                         <?= $hasFile ? 'Uploaded' : 'Required' ?>
                     </span>
+
+                    <?php if ($isFailed): ?>
+                        <span class="upload-badge upload-badge--failed">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/></svg>
+                            Re-upload Required
+                        </span>
+                        <?php if ($officerNote): ?>
+                            <span class="upload-officer-note">
+                                <strong>Officer note:</strong> <?= e($officerNote) ?>
+                            </span>
+                        <?php endif; ?>
+                    <?php elseif ($isPassed): ?>
+                        <span class="upload-badge upload-badge--passed">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M10.97 4.97a.235.235 0 0 0-.02.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05z"/></svg>
+                            Passed Evaluation
+                        </span>
+                    <?php endif; ?>
+
+                    <?php if ($isVicinity): ?>
+                        <span class="upload-helper-text">
+                            <?= $hasFile ? 'Generated from the drawn land boundary.' : 'Draw the land boundary in the application form to generate this PDF.' ?>
+                        </span>
+                    <?php endif; ?>
 
                     <?php if ($detailText): ?>
                         <details class="req-details-dropdown">
@@ -219,26 +415,70 @@ require __DIR__ . '/../partials/header.php';
 
             <div class="upload-control">
                 <?php if ($isVicinity): ?>
-                    <div class="auto-upload-note">
-                        <strong>Auto upload</strong>
+                    <?php
+                        $noteClass = $hasFile
+                            ? 'auto-upload-note--ready'
+                            : ($polygonDrawn ? 'auto-upload-note--pending' : 'auto-upload-note--missing');
+                    ?>
+                    <div class="auto-upload-note <?= $noteClass ?>">
+                        <strong>Auto-generated PDF</strong>
                         <span>
-                            <?= $hasFile ? 'Generated from the pinned map location.' : 'Pin the location in the application form to generate this PDF.' ?>
+                            <?php if ($hasFile): ?>
+                                Vicinity Map.pdf is ready — generated from your drawn land boundary.
+                            <?php elseif ($polygonDrawn): ?>
+                                Land boundary found. Click <em>Generate Now</em> to create the PDF.
+                            <?php else: ?>
+                                No land boundary drawn yet. Go to the application form and draw your lot boundary first.
+                            <?php endif; ?>
                         </span>
                     </div>
-                <?php else: ?>
-                    <label class="file-picker">
-                        <input
-                            type="file"
-                            name="<?= e($doc['requirement_key']) ?>"
-                            data-autosave-file
-                            data-requirement-key="<?= e($doc['requirement_key']) ?>"
-                            accept=".pdf,.jpg,.jpeg,.png"
-                            aria-label="Upload <?= e($doc['title']) ?>"
-                        >
-                        <span>Choose file</span>
-                    </label>
 
-                    <span class="file-name" data-file-name>
+                    <?php if ($polygonDrawn): ?>
+                        <button type="submit"
+                                form="vicinity-gen-form"
+                                class="preview-link"
+                                style="cursor:pointer;">
+                            <?= $hasFile ? 'Regenerate' : 'Generate Now' ?>
+                        </button>
+                    <?php else: ?>
+                        <a class="preview-link" href="application-form.php?edit=<?= (int)$applicationId ?>">
+                            Draw on Map
+                        </a>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <div class="upload-actions">
+                        <label class="file-picker" title="Choose a file from your device">
+                            <input
+                                type="file"
+                                name="<?= e($doc['requirement_key']) ?>"
+                                data-autosave-file
+                                data-requirement-key="<?= e($doc['requirement_key']) ?>"
+                                accept=".pdf,.jpg,.jpeg,.png"
+                                aria-label="Upload <?= e($doc['title']) ?>"
+                            >
+                            <span>Choose file</span>
+                        </label>
+
+                        <label class="file-picker file-picker--camera" title="Take a photo with your camera">
+                            <input
+                                type="file"
+                                name="<?= e($doc['requirement_key']) ?>_camera"
+                                data-autosave-file
+                                data-requirement-key="<?= e($doc['requirement_key']) ?>"
+                                accept="image/*"
+                                capture="environment"
+                                aria-label="Take photo for <?= e($doc['title']) ?>"
+                            >
+                            <span aria-hidden="true">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                    <path d="M15 12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1.172a3 3 0 0 0 2.12-.879l.83-.828A1 1 0 0 1 6.827 3h2.344a1 1 0 0 1 .707.293l.828.828A3 3 0 0 0 12.828 5H14a1 1 0 0 1 1 1v6zM2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2z"/>
+                                    <path d="M8 11a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5zm0 1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/>
+                                </svg>
+                            </span>
+                        </label>
+                    </div>
+
+                    <span class="file-name" data-file-name title="<?= $hasFile ? 'File saved' : 'No file chosen' ?>">
                         <?= $hasFile ? 'File saved' : 'No file chosen' ?>
                     </span>
                 <?php endif; ?>
@@ -247,16 +487,16 @@ require __DIR__ . '/../partials/header.php';
                     type="button"
                     class="preview-link <?= $hasFile ? '' : 'is-hidden' ?>"
                     data-preview-btn
-                    data-preview-url="<?= $hasFile ? e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?id=' . (int)$doc['id']) : '' ?>"
-                    data-preview-type="<?= $hasFile ? e($doc['file_mime'] ?? 'application/pdf') : '' ?>"
+                    data-preview-url="<?= e($previewUrl) ?>"
+                    data-preview-type="<?= e($previewType) ?>"
                     aria-label="Preview <?= e($doc['title']) ?>"
                 >
                     Preview
                 </button>
 
-                <?php if ($isVicinity && !$hasFile): ?>
+                <?php if ($isVicinity && !$hasFile && !$polygonDrawn): ?>
                     <a class="preview-link" href="application-form.php?edit=<?= (int)$applicationId ?>">
-                        Edit Map
+                        Draw on Map
                     </a>
                 <?php endif; ?>
             </div>
@@ -282,12 +522,15 @@ require __DIR__ . '/../partials/header.php';
     </div>
 </form>
 
-<style>
-    /* ─────────────────────────────────────────────
-       Upload Page Layout Improvements
-       Moves Choose File + Preview to the right
-    ───────────────────────────────────────────── */
+<?php if ($polygonDrawn): ?>
+<form id="vicinity-gen-form" method="post" style="display:none;">
+    <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="application_id" value="<?= (int)$applicationId ?>">
+    <input type="hidden" name="action" value="generate_vicinity_map">
+</form>
+<?php endif; ?>
 
+<style>
     .document-upload-panel {
         background: #fff;
         border: 1px solid #f0d99f;
@@ -311,7 +554,7 @@ require __DIR__ . '/../partials/header.php';
     }
 
     .upload-office-label {
-        color: #c59000;
+        color: #8a8172;
         font-size: 0.72rem;
         font-weight: 900;
         letter-spacing: 0.08em;
@@ -319,9 +562,9 @@ require __DIR__ . '/../partials/header.php';
     }
 
     .upload-row {
-        display: flex !important;
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) minmax(520px, auto);
         align-items: center;
-        justify-content: space-between;
         gap: 24px;
         width: 100%;
         min-height: 104px;
@@ -337,11 +580,132 @@ require __DIR__ . '/../partials/header.php';
         padding-right: 8px;
     }
 
+    /* ── Failed row ── */
+    .upload-row.is-failed {
+        background: #fff5f5;
+        border-left: 4px solid #ef4444;
+        border-bottom: 1px solid #fecaca;
+        padding-left: 12px;
+        border-radius: 0 0 10px 10px;
+        animation: failed-pulse 2s ease-in-out 1;
+    }
+
+    @keyframes failed-pulse {
+        0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.35); }
+        50%  { box-shadow: 0 0 0 8px rgba(239,68,68,.0); }
+        100% { box-shadow: none; }
+    }
+
+    /* ── Passed row ── */
+    .upload-row.is-passed {
+        background: #f0fdf4;
+        border-left: 4px solid #22c55e;
+        border-bottom: 1px solid #bbf7d0;
+        padding-left: 12px;
+        border-radius: 0 0 10px 10px;
+    }
+
+    /* ── Evaluation badges ── */
+    .upload-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 4px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+    }
+
+    .upload-badge--failed {
+        background: #fee2e2;
+        color: #991b1b;
+        border: 1px solid #fca5a5;
+    }
+
+    .upload-badge--passed {
+        background: #dcfce7;
+        color: #166534;
+        border: 1px solid #86efac;
+    }
+
+    /* ── Officer note ── */
+    .upload-officer-note {
+        display: block;
+        margin-top: 5px;
+        padding: 6px 10px;
+        background: #fff1f2;
+        border-left: 3px solid #ef4444;
+        border-radius: 0 6px 6px 0;
+        font-size: 0.76rem;
+        color: #7f1d1d;
+        line-height: 1.5;
+        max-width: 420px;
+    }
+
+    /* ── Failed docs banner ── */
+    .failed-docs-banner {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        background: #fff1f2;
+        border: 1px solid #fca5a5;
+        border-left: 5px solid #ef4444;
+        border-radius: 12px;
+        box-shadow: 0 4px 14px rgba(239,68,68,.10);
+    }
+
+    .failed-docs-banner-icon {
+        flex-shrink: 0;
+        color: #ef4444;
+        margin-top: 2px;
+    }
+
+    .failed-docs-banner-body {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .failed-docs-banner-body strong {
+        display: block;
+        font-size: 0.9rem;
+        color: #7f1d1d;
+        margin-bottom: 2px;
+    }
+
+    .failed-docs-banner-body > span {
+        display: block;
+        font-size: 0.82rem;
+        color: #991b1b;
+        margin-bottom: 8px;
+    }
+
+    .failed-docs-list {
+        margin: 0;
+        padding-left: 18px;
+        font-size: 0.82rem;
+        color: #7f1d1d;
+        line-height: 1.7;
+    }
+
+    .failed-doc-link {
+        color: #b91c1c;
+        font-weight: 700;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    .failed-doc-link:hover {
+        color: #7f1d1d;
+    }
+
     .upload-copy {
         display: flex;
         align-items: flex-start;
         gap: 12px;
-        flex: 1 1 auto;
         min-width: 0;
     }
 
@@ -381,16 +745,30 @@ require __DIR__ . '/../partials/header.php';
         margin-bottom: 4px;
     }
 
+    .upload-helper-text {
+        display: block;
+        color: #7a6a4d;
+        font-size: 0.76rem;
+        line-height: 1.4;
+        font-weight: 600;
+    }
+
     .upload-control {
-        margin-left: auto;
-        display: flex !important;
+        display: grid;
+        grid-template-columns: auto minmax(130px, 170px) auto;
+        align-items: center;
+        justify-content: end;
+        gap: 10px;
+        min-width: 520px;
+        text-align: right;
+    }
+
+    .upload-actions {
+        display: inline-flex;
         align-items: center;
         justify-content: flex-end;
-        gap: 10px;
-        flex: 0 0 auto;
-        min-width: 430px;
-        max-width: 520px;
-        text-align: right;
+        gap: 8px;
+        white-space: nowrap;
     }
 
     .file-picker {
@@ -416,9 +794,9 @@ require __DIR__ . '/../partials/header.php';
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 38px;
+        min-height: 40px;
         padding: 10px 17px;
-        border-radius: 8px;
+        border-radius: 9px;
         background: #241b0b;
         color: #fff;
         font-size: 0.78rem;
@@ -435,9 +813,24 @@ require __DIR__ . '/../partials/header.php';
         opacity: 0.92;
     }
 
+    .file-picker--camera span {
+        width: 46px;
+        min-width: 46px;
+        padding: 10px;
+        background: #241b0b;
+        color: #fff;
+        border-color: #241b0b;
+    }
+
+    .file-picker--camera:hover span {
+        background: #3a2b10;
+        border-color: #3a2b10;
+    }
+
     .file-name {
-        display: inline-block;
-        max-width: 160px;
+        display: block;
+        width: 100%;
+        max-width: 170px;
         color: #7a6a4d;
         font-size: 0.8rem;
         font-weight: 600;
@@ -451,9 +844,9 @@ require __DIR__ . '/../partials/header.php';
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 34px;
-        padding: 8px 14px;
-        border-radius: 8px;
+        min-height: 38px;
+        padding: 9px 15px;
+        border-radius: 9px;
         border: 1px solid #f4bf31;
         background: #fff9e6;
         color: #c59000;
@@ -480,8 +873,6 @@ require __DIR__ . '/../partials/header.php';
         display: none !important;
     }
 
-    /* ── Requirement details dropdown ── */
-
     .req-details-dropdown {
         margin-top: 5px;
     }
@@ -492,7 +883,7 @@ require __DIR__ . '/../partials/header.php';
         gap: 5px;
         font-size: 0.72rem;
         font-weight: 700;
-        color: #c59000;
+        color: #8a8172;
         cursor: pointer;
         user-select: none;
         list-style: none;
@@ -500,16 +891,13 @@ require __DIR__ . '/../partials/header.php';
         letter-spacing: 0.02em;
     }
 
-    .req-details-summary::-webkit-details-marker {
-        display: none;
-    }
-
+    .req-details-summary::-webkit-details-marker,
     .req-details-summary::marker {
         display: none;
     }
 
     .req-details-summary:hover {
-        color: #8a6400;
+        color: #241b0b;
     }
 
     .req-details-body {
@@ -552,20 +940,42 @@ require __DIR__ . '/../partials/header.php';
         line-height: 1.35;
     }
 
-    @media (max-width: 991.98px) {
+    /* Ready — green tint */
+    .auto-upload-note--ready {
+        border-color: #b7e4c7;
+        background: #f0fdf4;
+        color: #1a5c35;
+    }
+    .auto-upload-note--ready strong { color: #166534; }
+
+    /* Polygon drawn but PDF not yet generated — amber tint */
+    .auto-upload-note--pending {
+        border-color: #fcd34d;
+        background: #fffbeb;
+        color: #78450a;
+    }
+    .auto-upload-note--pending strong { color: #92400e; }
+
+    /* No polygon drawn yet — red tint */
+    .auto-upload-note--missing {
+        border-color: #fca5a5;
+        background: #fff5f5;
+        color: #7f1d1d;
+    }
+    .auto-upload-note--missing strong { color: #991b1b; }
+
+    @media (max-width: 1100px) {
         .upload-row {
-            align-items: flex-start;
-            gap: 18px;
+            grid-template-columns: 1fr;
+            align-items: stretch;
+            gap: 14px;
         }
 
         .upload-control {
-            min-width: 330px;
-            max-width: 420px;
-            flex-wrap: wrap;
-        }
-
-        .file-name {
-            max-width: 130px;
+            min-width: 0;
+            width: 100%;
+            justify-content: start;
+            grid-template-columns: auto minmax(120px, 1fr) auto;
         }
     }
 
@@ -581,8 +991,6 @@ require __DIR__ . '/../partials/header.php';
         }
 
         .upload-row {
-            flex-direction: column;
-            align-items: stretch;
             min-height: auto;
             padding: 18px 0;
         }
@@ -593,16 +1001,17 @@ require __DIR__ . '/../partials/header.php';
         }
 
         .upload-control {
-            width: 100%;
-            min-width: 0;
-            max-width: none;
-            margin-left: 0;
-            justify-content: flex-start;
+            grid-template-columns: 1fr;
             text-align: left;
         }
 
+        .upload-actions {
+            justify-content: flex-start;
+            flex-wrap: wrap;
+        }
+
         .file-name {
-            max-width: calc(100vw - 230px);
+            max-width: 100%;
         }
 
         .auto-upload-note {
@@ -610,23 +1019,25 @@ require __DIR__ . '/../partials/header.php';
             min-width: 0;
             max-width: none;
         }
+
+        .preview-link {
+            width: max-content;
+        }
     }
 
     @media (max-width: 420px) {
-        .upload-control {
-            flex-direction: column;
-            align-items: stretch;
-            gap: 8px;
-        }
-
+        .upload-actions,
         .file-picker,
         .file-picker span,
         .preview-link {
             width: 100%;
         }
 
+        .file-picker--camera span {
+            width: 100%;
+        }
+
         .file-name {
-            max-width: 100%;
             width: 100%;
             text-align: center;
         }
@@ -711,6 +1122,7 @@ require __DIR__ . '/../partials/header.php';
 
             if (fileNameEl) {
                 fileNameEl.textContent = file.name;
+                fileNameEl.title = file.name;
             }
 
             if (statusEl) {
@@ -720,7 +1132,7 @@ require __DIR__ . '/../partials/header.php';
 
             if (previewBtn) {
                 previewBtn.dataset.previewUrl  = URL.createObjectURL(file);
-                previewBtn.dataset.previewType = file.name.split('.').pop().toLowerCase();
+                previewBtn.dataset.previewType = file.type || file.name.split('.').pop().toLowerCase();
                 previewBtn.classList.remove('is-hidden');
             }
 
@@ -745,7 +1157,8 @@ require __DIR__ . '/../partials/header.php';
 
                 if (previewBtn) {
                     previewBtn.dataset.previewUrl  = p.preview_url;
-                    previewBtn.dataset.previewType = p.file_mime || file.name.split('.').pop().toLowerCase();
+                    previewBtn.dataset.previewType = p.file_mime || file.type || file.name.split('.').pop().toLowerCase();
+                    previewBtn.classList.remove('is-hidden');
                 }
 
                 if (statusEl) {
@@ -754,6 +1167,7 @@ require __DIR__ . '/../partials/header.php';
                 }
 
                 row.classList.add('is-uploaded');
+                row.classList.remove('is-failed');  // clear failed highlight after re-upload
                 clearDraft(key);
 
                 if (!wasUploaded) {
@@ -777,6 +1191,16 @@ require __DIR__ . '/../partials/header.php';
             e.returnValue = 'You have unsaved draft selections. Leave anyway?';
         }
     });
+
+    // ── Auto-scroll to first failed document on page load ────────────────────
+    (function () {
+        var firstFailed = document.querySelector('[data-failed]');
+        if (!firstFailed) { return; }
+        // Small delay so the page has fully painted before scrolling
+        setTimeout(function () {
+            firstFailed.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 400);
+    }());
 
     var form = document.getElementById('upload-form');
 

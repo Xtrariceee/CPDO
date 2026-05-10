@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../app/bootstrap.php';
 $user = require_role([ROLE_ZONING, ROLE_SYSTEM_ADMIN]);
 
 $underEvaluation = officer_applications(['SUBMITTED', 'PRE_EVALUATION']);
+$paymentPending  = officer_applications(['PAYMENT_PENDING']);
 $paid = officer_applications(['PAID']);
 $paymentToVerify = [];
 $scheduleReady = [];
@@ -63,7 +64,7 @@ require __DIR__ . '/../partials/header.php';
 }
 </style>
 <div class="row g-3 mb-4">
-    <div class="col-md-4">
+    <div class="col-md-3">
         <a class="zo-card" href="pre-evaluation.php">
             <div class="zo-card-label">Pre-evaluation</div>
             <div class="zo-card-title">Pre-evaluation</div>
@@ -71,7 +72,15 @@ require __DIR__ . '/../partials/header.php';
             <div class="zo-card-note">Documents awaiting review</div>
         </a>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
+        <a class="zo-card" href="../admin-officer/order-payment.php">
+            <div class="zo-card-label">Order of Payment</div>
+            <div class="zo-card-title">Order of Payment</div>
+            <div class="zo-card-count"><?= count($paymentPending) ?></div>
+            <div class="zo-card-note">Applications ready for payment order</div>
+        </a>
+    </div>
+    <div class="col-md-3">
         <a class="zo-card" href="payment-verification.php">
             <div class="zo-card-label">Payment Verification</div>
             <div class="zo-card-title">Payment</div>
@@ -79,7 +88,7 @@ require __DIR__ . '/../partials/header.php';
             <div class="zo-card-note">Paid receipts awaiting verification</div>
         </a>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
         <a class="zo-card" href="inspection-scheduling.php">
             <div class="zo-card-label">Inspection Scheduling</div>
             <div class="zo-card-title">Schedule Site Inspection</div>
@@ -103,6 +112,8 @@ require __DIR__ . '/../partials/header.php';
                     <td>
                         <?php if (in_array($application['phase_status'], ['SUBMITTED', 'PRE_EVALUATION'], true)): ?>
                             <a class="btn btn-sm btn-primary" href="pre-evaluation.php?id=<?= (int)$application['id'] ?>">Evaluate</a>
+                        <?php elseif ($application['phase_status'] === 'PAYMENT_PENDING'): ?>
+                            <a class="btn btn-sm btn-warning" href="../admin-officer/order-payment.php?id=<?= (int)$application['id'] ?>">Generate OP</a>
                         <?php elseif ($application['phase_status'] === 'PAID'): ?>
                             <?php $rowOrder = payment_order_for_application((int)$application['id']) ?: []; ?>
                             <a class="btn btn-sm btn-primary" href="<?= payment_order_is_verified($rowOrder) ? 'inspection-scheduling' : 'payment-verification' ?>.php?id=<?= (int)$application['id'] ?>"><?= payment_order_is_verified($rowOrder) ? 'Schedule' : 'Verify Payment' ?></a>
