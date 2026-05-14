@@ -170,3 +170,10 @@ function latest_meeting_for_application(int $applicationId): ?array
     $stmt->execute([$applicationId]);
     return $stmt->fetch() ?: null;
 }
+
+function all_meetings_for_application(int $applicationId): array
+{
+    $stmt = db()->prepare('SELECT * FROM meetings WHERE application_id = ? ORDER BY scheduled_at DESC, id DESC');
+    $stmt->execute([$applicationId]);
+    return $stmt->fetchAll();
+}

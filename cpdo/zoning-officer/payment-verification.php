@@ -143,7 +143,8 @@ require __DIR__ . '/../partials/header.php';
                         <table class="table table-sm align-middle mb-0">
                             <thead>
                                 <tr>
-                                    <th style="width:160px;">Date &amp; Time</th>
+                                    <th style="width:100px;">Date</th>
+                                    <th style="width:80px;">Time</th>
                                     <th>Event</th>
                                     <th>By</th>
                                     <th>Details</th>
@@ -163,25 +164,29 @@ require __DIR__ . '/../partials/header.php';
                                     'PAYMENT_MARKED_PAID'        => 'text-bg-info',
                                     default                      => 'text-bg-secondary',
                                 };
-                                $details = '';
+                                // Build details: always include account name + registry, then any extra fields
+                                $detailParts = [];
+                                $detailParts[] = 'Account: ' . e($application['account_name'] ?? '—');
+                                $detailParts[] = 'Registry: ' . e($application['registry_number'] ?? '—');
                                 if (!empty($log['details'])) {
                                     $decoded = json_decode($log['details'], true);
                                     if (is_array($decoded)) {
-                                        $parts = [];
                                         foreach ($decoded as $k => $v) {
-                                            $parts[] = ucwords(str_replace('_', ' ', $k)) . ': ' . e((string)$v);
+                                            if (!in_array($k, ['account_name', 'registry_number'], true)) {
+                                                $detailParts[] = ucwords(str_replace('_', ' ', $k)) . ': ' . e((string)$v);
+                                            }
                                         }
-                                        $details = implode(' · ', $parts);
                                     }
                                 }
+                                $logDate = $log['created_at'] ? date('M j, Y', strtotime($log['created_at'])) : '—';
+                                $logTime = $log['created_at'] ? date('H:i', strtotime($log['created_at'])) : '—';
                             ?>
                                 <tr>
-                                    <td class="text-secondary small text-nowrap">
-                                        <?= e(date('M j, Y H:i', strtotime($log['created_at']))) ?>
-                                    </td>
+                                    <td class="text-secondary small text-nowrap"><?= e($logDate) ?></td>
+                                    <td class="text-secondary small text-nowrap"><?= e($logTime) ?></td>
                                     <td><span class="badge <?= $badgeClass ?>"><?= $eventLabel ?></span></td>
                                     <td class="small"><?= e($log['actor_name'] ?? '—') ?></td>
-                                    <td class="small text-secondary"><?= $details ?: '—' ?></td>
+                                    <td class="small text-secondary"><?= implode(' · ', $detailParts) ?></td>
                                 </tr>
                             <?php endforeach; ?>
                             </tbody>

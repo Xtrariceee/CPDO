@@ -30,17 +30,8 @@ if (empty($secretKey)) {
     redirect('landlord/application-show.php?id=' . $applicationId);
 }
 
-// ── Localhost / non-HTTPS detection ──────────────────────────────────────────
-// PayMongo requires HTTPS success/cancel URLs. On localhost we simulate payment.
-$isLocalhost = (bool)preg_match('#^https?://(localhost|127\.\d+\.\d+\.\d+|::1)(:\d+)?(/|$)#i', $baseUrl);
-if ($isLocalhost) {
-    $receipt = 'RCPT-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
-    mark_payment_order_paid($orderId, $receipt, 'Simulated (localhost)');
-    advance_application($applicationId, 'PAID', 6);
-    audit_log((int)$user['id'], 'PAYMENT_SIMULATED_LOCALHOST', 'payment_orders', $orderId, ['receipt_number' => $receipt]);
-    $_SESSION['flash_success'] = 'Payment simulated on localhost (PayMongo requires HTTPS). Receipt: ' . $receipt;
-    redirect('landlord/application-show.php?id=' . $applicationId);
-}
+// Note: PayMongo redirect URLs (success_url / cancel_url) do not require HTTPS —
+// only webhook endpoints do. Localhost development works fine with the live API.
 
 // ── Resolve CA bundle (WampServer / XAMPP SSL fix) ────────────────────────────
 $caBundle = (function (): string {

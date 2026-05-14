@@ -2,7 +2,6 @@
 require_once __DIR__ . '/../../app/bootstrap_cpdo.php';
 $user = require_role([ROLE_TWG, ROLE_SYSTEM_ADMIN]);
 verify_csrf();
-
 if (!function_exists('twg_minutes_fields')) {
     function twg_minutes_fields(): array {
         return [
@@ -318,10 +317,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'save_minutes') {
+        $meetingId = $existing ? (int)$existing['id'] : (int)db()->lastInsertId();
         advance_application($applicationId, 'DELIBERATION', 11);
         notify_user((int)$application['landlord_id'], $applicationId, 'TWG Meeting Conducted', 'The TWG meeting for your application has been conducted. Your application is now under deliberation.');
         notify_role(ROLE_ZONING, $applicationId, 'TWG Minutes Ready for Resolution', 'The LZRC TWG minutes of meeting have been generated and are ready for zoning officer review and resolution preparation.');
-        audit_log((int)$user['id'], 'TWG_MINUTES_GENERATED_AND_SENT_TO_ZONING', 'applications', $applicationId);
+        audit_log((int)$user['id'], 'TWG_MINUTES_SAVED', 'meetings', $meetingId, [
+            'application_id'  => $applicationId,
+            'registry_number' => $application['registry_number'] ?? '',
+            'account_name'    => $application['account_name'] ?? '',
+            'meeting_date'    => $meetingDate,
+            'meeting_time'    => $meetingTime,
+        ]);
         $_SESSION['flash_success'] = 'Minutes of meeting saved, PDF is ready, and zoning officer has been notified.';
         redirect('twg/meeting.php?id=' . $applicationId . '#minutes-panel');
     }
@@ -343,6 +349,23 @@ if ($application) {
 
 $minutesData    = twg_minutes_data_from_meeting($meeting, $application, $user);
 $meetingRows    = twg_all_meetings();
+
+// Minutes generation log for the selected application
+$minutesLogs = [];
+if ($application) {
+    $logStmt = db()->prepare(
+        "SELECT al.created_at, al.details,
+                CONCAT_WS(' ', u.first_name, u.last_name) AS prepared_by_name
+         FROM audit_logs al
+         LEFT JOIN users u ON u.id = al.user_id
+         WHERE al.action = 'TWG_MINUTES_SAVED'
+           AND al.entity_type = 'meetings'
+           AND al.entity_id IN (SELECT id FROM meetings WHERE application_id = ?)
+         ORDER BY al.created_at DESC"
+    );
+    $logStmt->execute([(int)$application['id']]);
+    $minutesLogs = $logStmt->fetchAll();
+}
 $calendarEvents = [];
 foreach ($meetingRows as $row) {
     $ts = !empty($row['scheduled_at']) ? strtotime($row['scheduled_at']) : false;
@@ -365,74 +388,67 @@ if (!$upcomingEvents) $upcomingEvents = $calendarEvents;
 require __DIR__ . '/../partials/header.php';
 ?>
 <style>
-:root{--mm-bg:#0f131c;--mm-card:#151a25;--mm-card-2:#1b2130;--mm-border:#2a3144;--mm-border-2:#353d52;--mm-text:#f8fafc;--mm-muted:#94a3b8;--mm-muted-2:#64748b;--mm-accent:#4fffb0;--mm-accent-2:#00c8ff;--mm-warning:#f59e0b;--mm-green:#22c55e;--mm-blue:#3b82f6;--mm-danger:#ef4444;}
-body.meeting-management-page{background:radial-gradient(circle at 1px 1px,rgba(79,255,176,.08) 1px,transparent 0),linear-gradient(180deg,#0d111a 0%,#111827 100%);background-size:30px 30px,100% 100%;color:var(--mm-text);}
+/* ── Meeting Management — CPDO light government theme ── */
 .mm-shell{max-width:1180px;margin:0 auto;padding:30px 18px 56px;}
-.mm-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px;}
-.mm-title-block h1{margin:0;color:#fff;font-size:clamp(1.65rem,3vw,2.35rem);font-weight:900;letter-spacing:-.04em;}
-.mm-title-block p{margin:8px 0 0;color:var(--mm-muted);font-size:.92rem;line-height:1.6;}
+.mm-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px;flex-wrap:wrap;}
+.mm-title-block h1{margin:0;color:#0b2a4a;font-size:clamp(1.5rem,3vw,2.1rem);font-weight:900;letter-spacing:-.03em;}
+.mm-title-block p{margin:6px 0 0;color:#62748a;font-size:.9rem;line-height:1.6;}
 .mm-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.mm-btn,.mm-btn-outline,.mm-btn-accent{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:10px 16px;border-radius:11px;border:1px solid transparent;font-size:.84rem;font-weight:850;text-decoration:none;cursor:pointer;transition:transform .18s,box-shadow .18s,background .18s,border-color .18s;}
-.mm-btn-accent{background:var(--mm-accent);color:#04130d;box-shadow:0 12px 26px rgba(79,255,176,.20);}
-.mm-btn-accent:hover{color:#04130d;transform:translateY(-1px);box-shadow:0 16px 30px rgba(79,255,176,.26);}
-.mm-btn{background:#243047;color:#fff;border-color:var(--mm-border-2);}
-.mm-btn:hover{color:#fff;background:#2c3852;transform:translateY(-1px);}
-.mm-btn-outline{background:transparent;color:var(--mm-text);border-color:var(--mm-border-2);}
-.mm-btn-outline:hover{color:var(--mm-text);background:rgba(255,255,255,.04);transform:translateY(-1px);}
 .mm-grid-2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-bottom:22px;}
-.mm-card{overflow:hidden;border-radius:16px;background:rgba(21,26,37,.96);border:1px solid var(--mm-border);box-shadow:0 18px 44px rgba(0,0,0,.28);}
-.mm-card-header{display:flex;align-items:center;gap:10px;padding:18px 22px;border-bottom:1px solid var(--mm-border);}
-.mm-card-icon{width:18px;height:18px;color:var(--mm-accent);flex:0 0 18px;}
-.mm-card-title{margin:0;color:#fff;font-size:1rem;font-weight:900;letter-spacing:-.01em;}
-.mm-card-sub{margin:4px 0 0;color:var(--mm-muted);font-size:.8rem;line-height:1.5;}
-.mm-card-body{padding:22px;}
-.mm-form-group{margin-bottom:16px;}
+.mm-card{overflow:hidden;border-radius:12px;background:#fff;border:1px solid #d0dae6;box-shadow:0 2px 8px rgba(11,42,74,.07);}
+.mm-card-header{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #eef2f7;background:#f4f8fc;}
+.mm-card-icon{width:18px;height:18px;color:#1d6aad;flex:0 0 18px;}
+.mm-card-title{margin:0;color:#0b2a4a;font-size:.95rem;font-weight:900;}
+.mm-card-sub{margin:3px 0 0;color:#62748a;font-size:.78rem;line-height:1.5;}
+.mm-card-body{padding:20px;}
+.mm-form-group{margin-bottom:14px;}
 .mm-form-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;}
-.mm-form-label{display:block;margin-bottom:8px;color:var(--mm-muted-2);font-size:.74rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;}
-.mm-control{width:100%;min-height:40px;padding:10px 12px;border-radius:9px;border:1px solid var(--mm-border-2);background:#1b2130;color:#fff;font-size:.88rem;font-weight:650;outline:none;transition:border-color .16s,box-shadow .16s;}
-.mm-control:focus{border-color:var(--mm-accent);box-shadow:0 0 0 4px rgba(79,255,176,.10);}
-textarea.mm-control{min-height:118px;resize:vertical;line-height:1.6;}
+.mm-form-label{display:block;margin-bottom:6px;color:#3a5068;font-size:.72rem;font-weight:900;letter-spacing:.07em;text-transform:uppercase;}
+.mm-control{width:100%;min-height:40px;padding:9px 12px;border-radius:8px;border:1px solid #c5d3df;background:#fff;color:#0b2a4a;font-size:.88rem;font-weight:600;outline:none;transition:border-color .15s,box-shadow .15s;}
+.mm-control:focus{border-color:#1d6aad;box-shadow:0 0 0 3px rgba(29,106,173,.12);}
+textarea.mm-control{min-height:100px;resize:vertical;line-height:1.6;}
 .mm-type-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:6px;}
-.mm-type-card{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:62px;padding:12px;border-radius:10px;border:2px solid var(--mm-border-2);color:#fff;text-align:center;cursor:pointer;transition:border-color .16s,background .16s,transform .16s;}
+.mm-type-card{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:58px;padding:10px;border-radius:9px;border:2px solid #d0dae6;color:#3a5068;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;}
 .mm-type-card input{position:absolute;opacity:0;pointer-events:none;}
-.mm-type-card strong{font-size:.82rem;margin-top:5px;}
-.mm-type-card span{color:var(--mm-accent);font-size:1rem;line-height:1;}
-.mm-type-card:has(input:checked){background:rgba(79,255,176,.08);border-color:var(--mm-accent);}
-.mm-type-card:hover{transform:translateY(-1px);}
-.mm-calendar-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;}
-.mm-calendar-title{margin:0;color:#fff;font-size:.92rem;font-weight:900;}
-.mm-cal-nav{display:flex;gap:8px;}
-.mm-cal-btn{width:34px;height:34px;border-radius:9px;border:1px solid var(--mm-border-2);background:transparent;color:#fff;cursor:pointer;font-weight:900;}
-.mm-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;}
-.mm-cal-weekday{color:var(--mm-muted-2);text-align:center;font-size:.64rem;font-weight:900;text-transform:uppercase;letter-spacing:.08em;padding-bottom:8px;}
-.mm-cal-day{min-height:44px;border-radius:9px;padding:6px;color:#fff;font-size:.78rem;font-weight:800;text-align:center;position:relative;}
-.mm-cal-day.is-muted{opacity:.28;}
-.mm-cal-day.is-today{background:rgba(79,255,176,.20);color:var(--mm-accent);}
-.mm-cal-day.has-event::after{content:"";position:absolute;left:50%;bottom:5px;width:5px;height:5px;border-radius:999px;background:var(--mm-accent);transform:translateX(-50%);}
-.mm-upcoming-title{margin:20px 0 12px;padding-top:18px;border-top:1px solid var(--mm-border);color:var(--mm-muted-2);font-size:.74rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;}
-.mm-upcoming-list{display:grid;gap:10px;}
-.mm-upcoming-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;background:#1b2130;border:1px solid var(--mm-border-2);}
-.mm-avatar{width:36px;height:36px;flex:0 0 36px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--mm-accent),var(--mm-accent-2));color:#06110d;font-size:.74rem;font-weight:950;}
-.mm-upcoming-name{margin:0;color:#fff;font-size:.84rem;font-weight:850;}
-.mm-upcoming-meta{margin:2px 0 0;color:var(--mm-muted-2);font-size:.78rem;font-weight:600;}
-.mm-badge{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:5px 9px;border-radius:999px;background:rgba(245,158,11,.14);color:var(--mm-warning);font-size:.68rem;font-weight:900;white-space:nowrap;}
-.mm-badge.today{background:rgba(79,255,176,.12);color:var(--mm-accent);}
-.mm-panel{overflow:hidden;border-radius:16px;background:rgba(21,26,37,.96);border:1px solid var(--mm-border);box-shadow:0 18px 44px rgba(0,0,0,.28);}
-.mm-panel-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:20px 22px;border-bottom:1px solid var(--mm-border);}
-.mm-panel-title{margin:0;color:#fff;font-size:1.05rem;font-weight:900;letter-spacing:-.02em;}
-.mm-panel-sub{margin:5px 0 0;color:var(--mm-muted);font-size:.82rem;line-height:1.55;}
+.mm-type-card strong{font-size:.8rem;margin-top:4px;}
+.mm-type-card span{color:#1d6aad;font-size:.95rem;line-height:1;}
+.mm-type-card:has(input:checked){background:#eef2f7;border-color:#1d6aad;color:#0b2a4a;}
+.mm-calendar-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;}
+.mm-calendar-title{margin:0;color:#0b2a4a;font-size:.9rem;font-weight:900;}
+.mm-cal-btn{width:32px;height:32px;border-radius:8px;border:1px solid #d0dae6;background:#fff;color:#0b2a4a;cursor:pointer;font-weight:900;}
+.mm-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+.mm-cal-weekday{color:#8a9ab0;text-align:center;font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.07em;padding-bottom:6px;}
+.mm-cal-day{min-height:38px;border-radius:7px;padding:5px;color:#3a5068;font-size:.76rem;font-weight:700;text-align:center;position:relative;}
+.mm-cal-day.is-muted{opacity:.3;}
+.mm-cal-day.is-today{background:#dbeafe;color:#1d4ed8;font-weight:900;}
+.mm-cal-day.has-event::after{content:"";position:absolute;left:50%;bottom:4px;width:5px;height:5px;border-radius:999px;background:#1d6aad;transform:translateX(-50%);}
+.mm-upcoming-title{margin:18px 0 10px;padding-top:16px;border-top:1px solid #eef2f7;color:#8a9ab0;font-size:.7rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;}
+.mm-upcoming-list{display:grid;gap:8px;}
+.mm-upcoming-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:9px;background:#f4f8fc;border:1px solid #d0dae6;}
+.mm-avatar{width:34px;height:34px;flex:0 0 34px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1d6aad,#0b2a4a);color:#fff;font-size:.72rem;font-weight:950;}
+.mm-upcoming-name{margin:0;color:#0b2a4a;font-size:.82rem;font-weight:850;}
+.mm-upcoming-meta{margin:2px 0 0;color:#62748a;font-size:.76rem;font-weight:600;}
+.mm-badge{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:4px 8px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:.66rem;font-weight:900;white-space:nowrap;}
+.mm-badge.today{background:#dbeafe;color:#1e40af;}
+.mm-panel{overflow:hidden;border-radius:12px;background:#fff;border:1px solid #d0dae6;box-shadow:0 2px 8px rgba(11,42,74,.07);margin-bottom:22px;}
+.mm-panel-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:18px 22px;border-bottom:1px solid #eef2f7;background:#f4f8fc;}
+.mm-panel-title{margin:0;color:#0b2a4a;font-size:1rem;font-weight:900;}
+.mm-panel-sub{margin:4px 0 0;color:#62748a;font-size:.8rem;line-height:1.5;}
 .mm-panel-body{padding:22px;}
-.mm-section-title{margin:20px 0 14px;color:var(--mm-accent);font-size:.78rem;font-weight:950;text-transform:uppercase;letter-spacing:.09em;}
+.mm-section-title{margin:20px 0 12px;color:#1d6aad;font-size:.72rem;font-weight:950;text-transform:uppercase;letter-spacing:.09em;padding-bottom:6px;border-bottom:2px solid #eef2f7;}
 .mm-section-title:first-child{margin-top:0;}
-.mm-warning{display:none;margin-top:12px;padding:11px 13px;border-radius:10px;background:rgba(239,68,68,.12);color:#fecaca;border:1px solid rgba(239,68,68,.28);font-size:.8rem;font-weight:750;}
+.mm-warning{display:none;margin-top:10px;padding:10px 13px;border-radius:9px;background:#fff1f2;color:#991b1b;border:1px solid #fca5a5;font-size:.8rem;font-weight:750;}
 .mm-warning.is-visible{display:block;}
-.mm-empty{padding:42px 18px;text-align:center;color:var(--mm-muted);font-size:.9rem;line-height:1.7;}
-.mm-muted-note{color:var(--mm-muted);font-size:.82rem;line-height:1.55;}
-@media(max-width:991.98px){.mm-grid-2{grid-template-columns:1fr;}.mm-topbar,.mm-panel-header{align-items:stretch;flex-direction:column;}}
-@media(max-width:767.98px){.mm-shell{padding:24px 14px 44px;}.mm-form-row{grid-template-columns:1fr;}.mm-type-grid{grid-template-columns:1fr;}}
+.mm-empty{padding:36px 18px;text-align:center;color:#62748a;font-size:.88rem;line-height:1.7;}
+.mm-muted-note{color:#62748a;font-size:.8rem;line-height:1.55;}
+.mm-meeting-selector{background:#f4f8fc;border:1px solid #d0dae6;border-radius:10px;padding:16px 18px;margin-bottom:20px;}
+.mm-meeting-selector-label{display:block;margin-bottom:8px;color:#0b2a4a;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.07em;}
+.mm-meeting-selector-note{margin-top:6px;color:#62748a;font-size:.76rem;}
+.mm-log-table th{background:#eef2f7;color:#0b2a4a;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;}
+.mm-log-table td{font-size:.82rem;vertical-align:middle;}
+@media(max-width:991.98px){.mm-grid-2{grid-template-columns:1fr;}.mm-topbar,.mm-panel-header{flex-direction:column;}}
+@media(max-width:767.98px){.mm-shell{padding:20px 12px 40px;}.mm-form-row{grid-template-columns:1fr;}.mm-type-grid{grid-template-columns:1fr;}}
 </style>
-<script>document.body.classList.add('meeting-management-page');</script>
-
 <div class="mm-shell">
 <div class="mm-topbar">
   <div class="mm-title-block">
@@ -440,9 +456,9 @@ textarea.mm-control{min-height:118px;resize:vertical;line-height:1.6;}
     <p>Schedule LZRC TWG meetings, track upcoming meeting dates, prepare official minutes, generate a PDF copy, and notify the zoning officer for resolution preparation.</p>
   </div>
   <div class="mm-actions">
-    <a class="mm-btn-outline" href="index.php">Back to Dashboard</a>
+    <a class="btn btn-back btn-sm" href="index.php"><span aria-hidden="true">&larr;</span> Dashboard</a>
     <?php if ($application && $meeting): ?>
-      <a class="mm-btn-accent" href="meeting.php?id=<?= (int)$application['id'] ?>&download_minutes_pdf=1" target="_blank" rel="noopener">Download Minutes PDF</a>
+      <a class="btn btn-primary btn-sm" href="meeting.php?id=<?= (int)$application['id'] ?>&download_minutes_pdf=1" target="_blank" rel="noopener">Download Minutes PDF</a>
     <?php endif; ?>
   </div>
 </div>
@@ -502,7 +518,7 @@ textarea.mm-control{min-height:118px;resize:vertical;line-height:1.6;}
           <textarea class="mm-control" id="scheduleInvitees" name="invitees" rows="3" placeholder="List invitees, representatives, offices, or attendees."><?= e($minutesData['invitees'] ?? '') ?></textarea>
         </div>
         <div class="mm-warning" id="scheduleConflictWarning">This date and time already has a scheduled TWG meeting for another application.</div>
-        <button class="mm-btn-accent" id="scheduleSubmitBtn" style="width:100%;" <?= $applications ? '' : 'disabled' ?>>Schedule Meeting</button>
+        <button class="btn btn-primary w-100 mt-2" id="scheduleSubmitBtn" <?= $applications ? '' : 'disabled' ?>>Schedule Meeting</button>
       </form>
     </div>
   </div>
@@ -547,7 +563,7 @@ textarea.mm-control{min-height:118px;resize:vertical;line-height:1.6;}
   <div class="mm-panel-header">
     <div>
       <h2 class="mm-panel-title">Minutes of Meeting</h2>
-      <p class="mm-panel-sub">Fill out the official meeting minutes. Saving this form generates the minutes content, moves the application to deliberation, and notifies the zoning officer.</p>
+      <p class="mm-panel-sub">Select a scheduled meeting, fill out the official minutes, then save to move the application to deliberation and notify the zoning officer.</p>
     </div>
     <?php if ($application): ?>
       <div class="mm-muted-note"><strong><?= e($application['registry_number']) ?></strong><br><?= e($application['property_title']) ?></div>
@@ -555,6 +571,45 @@ textarea.mm-control{min-height:118px;resize:vertical;line-height:1.6;}
   </div>
   <div class="mm-panel-body">
     <?php if ($application): ?>
+
+      <!-- ── Step 1: Choose the scheduled meeting ── -->
+      <div class="mm-meeting-selector">
+        <span class="mm-meeting-selector-label">Step 1 — Select the Scheduled Meeting</span>
+        <?php
+        // Load all meetings for this application so the TWG member can pick one
+        $appMeetings = [];
+        try {
+            $mStmt = db()->prepare('SELECT * FROM meetings WHERE application_id = ? ORDER BY scheduled_at DESC');
+            $mStmt->execute([(int)$application['id']]);
+            $appMeetings = $mStmt->fetchAll();
+        } catch (Throwable $e) {}
+        ?>
+        <?php if ($appMeetings): ?>
+          <select class="mm-control" id="meetingSelector" style="max-width:480px;">
+            <?php foreach ($appMeetings as $idx => $m): ?>
+              <?php
+              $ts    = !empty($m['scheduled_at']) ? strtotime($m['scheduled_at']) : false;
+              $label = $ts
+                  ? date('M d, Y · h:i A', $ts)
+                  : 'Meeting #' . ($idx + 1) . ' (no date set)';
+              $hasMinutes = trim($m['minutes'] ?? '') !== '';
+              ?>
+              <option value="<?= (int)$m['id'] ?>" <?= $meeting && (int)$meeting['id'] === (int)$m['id'] ? 'selected' : '' ?>>
+                <?= e($label) ?><?= $hasMinutes ? ' ✓ Minutes saved' : '' ?>
+              </option>
+            <?php endforeach; ?>
+          </select>
+          <p class="mm-meeting-selector-note">
+            The minutes form below is pre-filled from the selected meeting. You must schedule a meeting first before filling out the minutes.
+          </p>
+        <?php else: ?>
+          <div class="alert alert-warning mb-0 mt-2" style="font-size:.85rem;">
+            No meeting has been scheduled yet for this application. Use the <strong>Schedule Meeting</strong> form above to set a date and time first.
+          </div>
+        <?php endif; ?>
+      </div>
+
+      <?php if ($appMeetings): ?>
       <form method="post" id="minutesForm">
         <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
         <input type="hidden" name="application_id" value="<?= (int)$application['id'] ?>">
@@ -668,19 +723,78 @@ textarea.mm-control{min-height:118px;resize:vertical;line-height:1.6;}
 
         <div class="mm-warning" id="minutesConflictWarning">This date and time already has a scheduled TWG meeting for another application.</div>
         <div class="mm-actions mt-3">
-          <button class="mm-btn-accent" id="minutesSubmitBtn" type="submit">Save Minutes, Generate PDF &amp; Notify Zoning Officer</button>
+          <button class="btn btn-primary" id="minutesSubmitBtn" type="submit">Save Minutes, Generate PDF &amp; Notify Zoning Officer</button>
           <?php if ($meeting): ?>
-            <a class="mm-btn-outline" href="meeting.php?id=<?= (int)$application['id'] ?>&download_minutes_pdf=1" target="_blank" rel="noopener">Download PDF</a>
+            <a class="btn btn-outline-secondary btn-sm" href="meeting.php?id=<?= (int)$application['id'] ?>&download_minutes_pdf=1" target="_blank" rel="noopener">Download PDF</a>
           <?php endif; ?>
         </div>
         <p class="mm-muted-note mt-3">The minutes are saved in the existing meeting record. The PDF is generated on demand from the saved minutes, and the zoning officer receives a system notification for resolution preparation.</p>
       </form>
+      <?php endif; /* $appMeetings */ ?>
     <?php else: ?>
       <div class="mm-empty">Select an application to schedule a meeting and prepare the minutes of meeting.</div>
     <?php endif; ?>
   </div>
 </section>
-</div>
+
+<!-- Minutes Generation Log -->
+<?php if ($application): ?>
+<section class="mm-panel" id="minutes-log">
+  <div class="mm-panel-header">
+    <div>
+      <h2 class="mm-panel-title">Minutes Generation Log</h2>
+      <p class="mm-panel-sub">History of all saved minutes of meeting for this application.</p>
+    </div>
+  </div>
+  <div class="mm-panel-body">
+    <?php if ($minutesLogs): ?>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0 mm-log-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Registry No.</th>
+              <th>Account Name</th>
+              <th>Meeting Date</th>
+              <th>Prepared By</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($minutesLogs as $log): ?>
+              <?php
+              $d = json_decode($log['details'] ?? '{}', true);
+              $logDate    = $log['created_at'] ? date('M d, Y', strtotime($log['created_at'])) : '—';
+              $logTime    = $log['created_at'] ? date('h:i A', strtotime($log['created_at'])) : '—';
+              $registry   = $d['registry_number'] ?? ($application['registry_number'] ?? '—');
+              $acctName   = $d['account_name']    ?? ($application['account_name']    ?? '—');
+              $meetDate   = '';
+              if (!empty($d['meeting_date'])) {
+                  $ts = strtotime($d['meeting_date'] . ' ' . ($d['meeting_time'] ?? ''));
+                  $meetDate = $ts ? date('M d, Y', $ts) : $d['meeting_date'];
+              }
+              $preparedBy = trim($log['prepared_by_name'] ?? '') ?: '—';
+              ?>
+              <tr>
+                <td class="text-secondary small text-nowrap"><?= e($logDate) ?></td>
+                <td class="text-secondary small text-nowrap"><?= e($logTime) ?></td>
+                <td class="small fw-bold"><?= e($registry) ?></td>
+                <td class="small"><?= e($acctName) ?></td>
+                <td class="small"><?= e($meetDate ?: '—') ?></td>
+                <td class="small"><?= e($preparedBy) ?></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php else: ?>
+      <p class="text-secondary small mb-0">No minutes have been saved yet for this application.</p>
+    <?php endif; ?>
+  </div>
+</section>
+<?php endif; ?>
+
+</div><!-- /.mm-shell -->
 
 <script>
 (function () {

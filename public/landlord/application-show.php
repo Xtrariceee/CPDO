@@ -238,30 +238,28 @@ require __DIR__ . '/../partials/header.php';
             </dl>
         </section>
 
-        <!-- Resolution / Endorsement (shown when APPROVED) -->
-        <?php if ($application['phase_status'] === 'APPROVED'): ?>
-            <?php
-            $finalOutput = db()->prepare('SELECT * FROM final_outputs WHERE application_id = ? ORDER BY id DESC LIMIT 1');
-            $finalOutput->execute([$applicationId]);
-            $finalRow = $finalOutput->fetch();
-            ?>
+        <!-- Resolution / Endorsement (shown when APPROVED or pending AO validation) -->
+        <?php
+        $finalOutput = db()->prepare('SELECT * FROM final_outputs WHERE application_id = ? ORDER BY id DESC LIMIT 1');
+        $finalOutput->execute([$applicationId]);
+        $finalRow = $finalOutput->fetch();
+        ?>
+        <?php if ($application['phase_status'] === 'APPROVED' || ($finalRow && !empty($finalRow['resolution_file_path']))): ?>
             <section class="gov-card p-4 mt-4" style="border-left:4px solid #157347;">
                 <h2 class="h5 mb-2" style="color:#157347;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M10.97 4.97a.235.235 0 0 0-.02.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05z"/></svg>
                     Application Approved
                 </h2>
-                <?php if ($finalRow): ?>
+                <?php if ($finalRow && !empty($finalRow['resolution_file_path'])): ?>
                     <p class="small text-secondary mb-2">
                         Endorsement No.: <strong><?= e($finalRow['endorsement_number'] ?? 'N/A') ?></strong><br>
                         Issued: <?= e($finalRow['uploaded_at'] ? date('F j, Y', strtotime($finalRow['uploaded_at'])) : '—') ?>
                     </p>
-                    <?php if (!empty($finalRow['resolution_file_path'])): ?>
-                        <a class="btn btn-success btn-sm w-100 mb-2"
-                           href="<?= e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?type=final_output&id=' . (int)$finalRow['id']) ?>"
-                           target="_blank" rel="noopener">
-                            View Endorsement / Resolution
-                        </a>
-                    <?php endif; ?>
+                    <a class="btn btn-success btn-sm w-100 mb-2"
+                       href="<?= e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?type=final_output&id=' . (int)$finalRow['id']) ?>"
+                       target="_blank" rel="noopener">
+                        View Endorsement / Resolution
+                    </a>
                 <?php else: ?>
                     <p class="small text-secondary mb-0">The endorsement document will appear here once issued by the Administrative Officer.</p>
                 <?php endif; ?>

@@ -10,13 +10,13 @@ declare(strict_types=1);
  * Landscape A4 (297 × 210 mm)
  * ┌──────────────────────────────┬──────────────────────────┐
  * │                              │  Title / Description     │
- * │   Main Satellite Map         │  (top ~55 mm)            │
+ * │   Main Satellite Map         │  (top ~58 mm)            │
  * │   with "THIS SITE" marker    ├──────────────────────────┤
  * │                              │  Legend — Land Use Types │
- * │                              │  (middle ~90 mm)         │
+ * │                              │  (middle ~100 mm)        │
  * │                              ├──────────────────────────┤
- * │                              │  Technical / Signature   │
- * │                              │  block (bottom ~45 mm)   │
+ * │                              │  Inset map + Signature   │
+ * │                              │  block (bottom ~40 mm)   │
  * └──────────────────────────────┴──────────────────────────┘
  *
  * Returns the relative path to the saved PDF (relative to project root).
@@ -31,7 +31,23 @@ function generate_vicinity_map_pdf(
 ): string {
     global $config;
 
+    // Resolve the API key — prefer the global $config already loaded by bootstrap,
+    // but fall back to reading env.php directly in case $config is not in scope
+    // (e.g. when called from a context where the global was not propagated).
     $mapsApiKey = $config['google']['maps_api_key'] ?? '';
+
+    if ($mapsApiKey === '') {
+        $envFile = __DIR__ . '/../config/env.php';
+        if (file_exists($envFile)) {
+            $envCfg     = require $envFile;
+            $mapsApiKey = $envCfg['google']['maps_api_key'] ?? '';
+            // Also repair the global so subsequent calls in this request work
+            if ($mapsApiKey !== '' && isset($config)) {
+                $config['google']['maps_api_key'] = $mapsApiKey;
+            }
+        }
+    }
+
     if ($mapsApiKey === '') {
         throw new RuntimeException('Google Maps API key is not configured. Add maps_api_key to config/env.php.');
     }
@@ -39,7 +55,9 @@ function generate_vicinity_map_pdf(
     // ── Resolve CA bundle (WampServer / XAMPP SSL fix) ────────────────────────
     $caBundle = (function (): string {
         $phpIni = ini_get('curl.cainfo');
-        if ($phpIni && is_file($phpIni)) { return $phpIni; }
+        if ($phpIni && is_file($phpIni)) {
+            return $phpIni;
+        }
         $candidates = [
             'C:/wamp64/bin/php/' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '.' . PHP_RELEASE_VERSION . '/extras/ssl/cacert.pem',
             'C:/wamp64/bin/php/php' . PHP_MAJOR_VERSION . PHP_MINOR_VERSION . '/extras/ssl/cacert.pem',
@@ -49,43 +67,63 @@ function generate_vicinity_map_pdf(
             __DIR__ . '/../storage/cacert.pem',
         ];
         foreach ($candidates as $path) {
-            if (is_file($path)) { return $path; }
+            if (is_file($path)) {
+                return $path;
+            }
         }
         return '';
     })();
 
     // ── Helper: cURL fetch with SSL fix ───────────────────────────────────────
     $curlFetch = function (string $url) use ($caBundle): string {
-        $ch = curl_init($url);
+        $ch   = curl_init($url);
         $opts = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_TIMEOUT        => 20,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
         ];
-        if ($caBundle !== '') { $opts[CURLOPT_CAINFO] = $caBundle; }
+
+        if ($caBundle !== '') {
+            // Use the discovered CA bundle with full verification
+            $opts[CURLOPT_SSL_VERIFYPEER] = true;
+            $opts[CURLOPT_SSL_VERIFYHOST] = 2;
+            $opts[CURLOPT_CAINFO]         = $caBundle;
+        } else {
+            // No CA bundle found — disable peer verification (XAMPP/dev only)
+            $opts[CURLOPT_SSL_VERIFYPEER] = false;
+            $opts[CURLOPT_SSL_VERIFYHOST] = 0;
+        }
+
         curl_setopt_array($ch, $opts);
-        $data  = curl_exec($ch);
-        $code  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $err   = curl_error($ch);
+        $data = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err  = curl_error($ch);
         curl_close($ch);
+
         if ($data === false || $err !== '') {
-            throw new RuntimeException('Failed to fetch satellite image: ' . $err);
+            throw new RuntimeException('Failed to fetch map image: ' . $err);
         }
         if ($code !== 200) {
-            throw new RuntimeException('Google Static Maps API returned HTTP ' . $code . '. Check your API key and billing.');
+            throw new RuntimeException(
+                'Google Static Maps API returned HTTP ' . $code
+                . '. Check your API key and billing.'
+            );
         }
-        return $data;
+        return (string)$data;
     };
+
+    // Always format coordinates with a dot decimal separator regardless of locale
+    $latStr = number_format($lat, 7, '.', '');
+    $lngStr = number_format($lng, 7, '.', '');
 
     // ── 1. Main satellite map (640×640, zoom 17) ──────────────────────────────
     $mainUrl = sprintf(
         'https://maps.googleapis.com/maps/api/staticmap'
-        . '?center=%s,%s&zoom=%d&size=640x640&maptype=satellite'
-        . '&markers=color:red%%7Clabel:%%E2%%97%%8F%%7C%s,%s'
+        . '?center=%s,%s&zoom=17&size=640x640&maptype=satellite'
+        . '&markers=color:red|label:S|%s,%s'
         . '&key=%s',
-        $lat, $lng, 17, $lat, $lng,
+        $latStr, $lngStr,
+        $latStr, $lngStr,
         urlencode($mapsApiKey)
     );
     $mainImageData = $curlFetch($mainUrl);
@@ -93,25 +131,31 @@ function generate_vicinity_map_pdf(
     // ── 2. Inset overview map (320×320, zoom 11) ──────────────────────────────
     $insetUrl = sprintf(
         'https://maps.googleapis.com/maps/api/staticmap'
-        . '?center=%s,%s&zoom=%d&size=320x320&maptype=roadmap'
-        . '&markers=color:red%%7C%s,%s'
+        . '?center=%s,%s&zoom=11&size=320x320&maptype=roadmap'
+        . '&markers=color:red|%s,%s'
         . '&key=%s',
-        $lat, $lng, 11, $lat, $lng,
+        $latStr, $lngStr,
+        $latStr, $lngStr,
         urlencode($mapsApiKey)
     );
     $insetImageData = $curlFetch($insetUrl);
 
-    // ── Write temp files ──────────────────────────────────────────────────────
+    // ── Write temp image files ────────────────────────────────────────────────
     $tmpDir = __DIR__ . '/../storage/tmp';
-    if (!is_dir($tmpDir)) { mkdir($tmpDir, 0775, true); }
+    if (!is_dir($tmpDir)) {
+        mkdir($tmpDir, 0775, true);
+    }
 
     $detectExt = function (string $data): string {
-        $mime = (new finfo(FILEINFO_MIME_TYPE))->buffer($data);
-        return match ($mime) {
-            'image/jpeg' => 'jpg',
-            'image/png'  => 'png',
-            default      => throw new RuntimeException('Unexpected image MIME: ' . $mime),
-        };
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime  = $finfo->buffer($data);
+        if ($mime === 'image/jpeg') {
+            return 'jpg';
+        }
+        if ($mime === 'image/png') {
+            return 'png';
+        }
+        throw new RuntimeException('Unexpected image MIME type from Google Maps API: ' . $mime);
     };
 
     $mainExt  = $detectExt($mainImageData);
@@ -120,13 +164,19 @@ function generate_vicinity_map_pdf(
     $mainTmp  = $tmpDir . '/' . bin2hex(random_bytes(6)) . '_main.'  . $mainExt;
     $insetTmp = $tmpDir . '/' . bin2hex(random_bytes(6)) . '_inset.' . $insetExt;
 
-    file_put_contents($mainTmp,  $mainImageData)  !== false || throw new RuntimeException('Could not write main image temp file.');
-    file_put_contents($insetTmp, $insetImageData) !== false || throw new RuntimeException('Could not write inset image temp file.');
+    if (file_put_contents($mainTmp, $mainImageData) === false) {
+        throw new RuntimeException('Could not write main image temp file.');
+    }
+    if (file_put_contents($insetTmp, $insetImageData) === false) {
+        @unlink($mainTmp);
+        throw new RuntimeException('Could not write inset image temp file.');
+    }
 
-    $fpdfMain  = strtoupper($mainExt  === 'jpg' ? 'JPEG' : 'PNG');
-    $fpdfInset = strtoupper($insetExt === 'jpg' ? 'JPEG' : 'PNG');
+    // FPDF type strings: 'JPEG' or 'PNG'
+    $fpdfMain  = ($mainExt  === 'jpg') ? 'JPEG' : 'PNG';
+    $fpdfInset = ($insetExt === 'jpg') ? 'JPEG' : 'PNG';
 
-    // ── 2. Build PDF ──────────────────────────────────────────────────────────
+    // ── Build PDF ─────────────────────────────────────────────────────────────
     // Landscape A4: 297 × 210 mm
     $pdf = new FPDF('L', 'mm', 'A4');
     $pdf->SetMargins(0, 0, 0);
@@ -139,20 +189,25 @@ function generate_vicinity_map_pdf(
     $pdf->Rect(5, 5, 287, 200);
 
     // ── Layout constants ──────────────────────────────────────────────────────
-    $mapX = 6;   $mapY = 6;   $mapW = 195; $mapH = 198;   // main map area
-    $panX = 203; $panY = 6;   $panW = 88;  $panH = 198;   // right panel
+    // Page: 297 × 210 mm  |  usable: 287 × 200 mm (5 mm margins)
+    // Left map area: x=6, y=6, w=195, h=198
+    // Right panel:   x=203, y=6, w=88, h=198
+    $mapX = 6;   $mapY = 6;   $mapW = 195; $mapH = 198;
+    $panX = 203; $panY = 6;   $panW = 88;  $panH = 198;
+
+    // Fixed section heights (must sum to <= $panH)
+    $titleH  = 58;   // Section 1 — title / description
+    $legendH = 100;  // Section 2 — legend
+    $sigH    = $panH - $titleH - $legendH;  // Section 3 — inset + signatures (40 mm)
 
     // ── Main satellite map ────────────────────────────────────────────────────
     $pdf->Image($mainTmp, $mapX, $mapY, $mapW, $mapH, $fpdfMain);
 
-    // Map border
     $pdf->SetDrawColor(0, 0, 0);
     $pdf->SetLineWidth(0.5);
     $pdf->Rect($mapX, $mapY, $mapW, $mapH);
 
-    // "THIS SITE" label overlay — centred on the map
-    $pdf->SetFont('Arial', 'B', 7);
-    $pdf->SetTextColor(255, 255, 255);
+    // "THIS SITE" label — centred horizontally, just below map centre
     $labelW = 28; $labelH = 6;
     $labelX = $mapX + ($mapW / 2) - ($labelW / 2);
     $labelY = $mapY + ($mapH / 2) + 6;
@@ -160,6 +215,8 @@ function generate_vicinity_map_pdf(
     $pdf->SetDrawColor(255, 255, 255);
     $pdf->SetLineWidth(0.3);
     $pdf->Rect($labelX, $labelY, $labelW, $labelH, 'FD');
+    $pdf->SetFont('Arial', 'B', 7);
+    $pdf->SetTextColor(255, 255, 255);
     $pdf->SetXY($labelX, $labelY + 0.8);
     $pdf->Cell($labelW, $labelH - 1.5, 'THIS SITE', 0, 0, 'C');
 
@@ -168,107 +225,95 @@ function generate_vicinity_map_pdf(
     $pdf->SetLineWidth(0.5);
     $pdf->Rect($panX, $panY, $panW, $panH);
 
-    $py = $panY; // running Y cursor inside the panel
-
     // ═════════════════════════════════════════════════════════════════════════
-    // SECTION 1 — Title / Description  (top ~58 mm)
+    // SECTION 1 — Title / Description  (fixed height: $titleH mm)
     // ═════════════════════════════════════════════════════════════════════════
-    $titleH = 58;
+    $sec1Y = $panY;
 
     // Government header
     $pdf->SetTextColor(11, 42, 74);
     $pdf->SetFont('Arial', '', 5.5);
-    $pdf->SetXY($panX + 2, $py + 2);
+    $pdf->SetXY($panX + 2, $sec1Y + 2);
     $pdf->MultiCell($panW - 4, 3.5, 'Republic of the Philippines', 0, 'C');
-    $py = $pdf->GetY();
 
     $pdf->SetFont('Arial', 'B', 5.5);
-    $pdf->SetXY($panX + 2, $py);
+    $pdf->SetXY($panX + 2, $pdf->GetY());
     $pdf->MultiCell($panW - 4, 3.5, 'City of Davao', 0, 'C');
-    $py = $pdf->GetY();
 
     $pdf->SetFont('Arial', 'B', 5.5);
-    $pdf->SetXY($panX + 2, $py);
+    $pdf->SetXY($panX + 2, $pdf->GetY());
     $pdf->MultiCell($panW - 4, 3.5, "OFFICE OF THE CITY PLANNING\nAND DEVELOPMENT COORDINATOR", 0, 'C');
-    $py = $pdf->GetY() + 1;
 
-    // Thin divider
-    $pdf->SetDrawColor(180, 180, 180); $pdf->SetLineWidth(0.2);
-    $pdf->Line($panX + 3, $py, $panX + $panW - 3, $py);
-    $py += 2;
+    $divY = $pdf->GetY() + 1;
+    $pdf->SetDrawColor(180, 180, 180);
+    $pdf->SetLineWidth(0.2);
+    $pdf->Line($panX + 3, $divY, $panX + $panW - 3, $divY);
 
-    // "VICINITY MAP" main title
+    // "VICINITY MAP" title
     $pdf->SetFont('Arial', 'B', 13);
     $pdf->SetTextColor(11, 42, 74);
-    $pdf->SetXY($panX + 2, $py);
+    $pdf->SetXY($panX + 2, $divY + 2);
     $pdf->MultiCell($panW - 4, 7, 'VICINITY MAP', 0, 'C');
-    $py = $pdf->GetY() + 1;
 
-    // Description line 1
+    // Description lines — truncate project name to avoid overflow
     $pdf->SetFont('Arial', '', 5.5);
     $pdf->SetTextColor(50, 60, 80);
-    $pdf->SetXY($panX + 2, $py);
-    $pdf->MultiCell($panW - 4, 3.5,
-        'MAP SHOWING THE LOCATION OF LOT ' . mb_strtoupper(mb_substr($projectName, 0, 40)),
-        0, 'C');
-    $py = $pdf->GetY();
+    $pdf->SetXY($panX + 2, $pdf->GetY() + 1);
+    $pdf->MultiCell(
+        $panW - 4, 3.5,
+        'MAP SHOWING THE LOCATION OF LOT ' . mb_strtoupper(mb_substr($projectName, 0, 35)),
+        0, 'C'
+    );
+    $pdf->SetXY($panX + 2, $pdf->GetY());
+    $pdf->MultiCell($panW - 4, 3.5, 'OVERLAYED WITH APPROVED LAND USE MAP', 0, 'C');
 
-    $pdf->SetXY($panX + 2, $py);
-    $pdf->MultiCell($panW - 4, 3.5,
-        'OVERLAYED WITH APPROVED LAND USE MAP',
-        0, 'C');
-    $py = $pdf->GetY() + 1;
+    $divY2 = $pdf->GetY() + 1;
+    $pdf->SetDrawColor(180, 180, 180);
+    $pdf->SetLineWidth(0.2);
+    $pdf->Line($panX + 3, $divY2, $panX + $panW - 3, $divY2);
 
-    // Thin divider
-    $pdf->SetDrawColor(180, 180, 180); $pdf->SetLineWidth(0.2);
-    $pdf->Line($panX + 3, $py, $panX + $panW - 3, $py);
-    $py += 2;
-
-    // Applicant / Registry
+    // Applicant — clamp to one line to stay within section
     $pdf->SetFont('Arial', '', 5);
     $pdf->SetTextColor(98, 116, 138);
-    $pdf->SetXY($panX + 2, $py);
+    $pdf->SetXY($panX + 2, $divY2 + 1.5);
     $pdf->Cell($panW - 4, 3.5, 'APPLICANT', 0, 2, 'L');
-    $py = $pdf->GetY();
 
     $pdf->SetFont('Arial', 'B', 6);
     $pdf->SetTextColor(11, 42, 74);
-    $pdf->SetXY($panX + 2, $py);
-    $pdf->MultiCell($panW - 4, 3.5, $applicantName, 0, 'L');
-    $py = $pdf->GetY() + 1;
+    $pdf->SetXY($panX + 2, $pdf->GetY());
+    // Truncate applicant name to prevent overflow into section 2
+    $shortName = mb_strlen($applicantName) > 28 ? mb_substr($applicantName, 0, 26) . '…' : $applicantName;
+    $pdf->Cell($panW - 4, 3.5, $shortName, 0, 2, 'L');
 
     $pdf->SetFont('Arial', '', 5);
     $pdf->SetTextColor(98, 116, 138);
-    $pdf->SetXY($panX + 2, $py);
+    $pdf->SetXY($panX + 2, $pdf->GetY() + 0.5);
     $pdf->Cell($panW - 4, 3.5, 'REGISTRY NO.', 0, 2, 'L');
-    $py = $pdf->GetY();
 
     $pdf->SetFont('Arial', 'B', 6);
     $pdf->SetTextColor(11, 42, 74);
-    $pdf->SetXY($panX + 2, $py);
+    $pdf->SetXY($panX + 2, $pdf->GetY());
     $pdf->Cell($panW - 4, 3.5, $registryNumber, 0, 2, 'L');
-    $py = $pdf->GetY() + 1;
 
-    // Section 1 bottom border
-    $pdf->SetDrawColor(0, 0, 0); $pdf->SetLineWidth(0.4);
-    $pdf->Line($panX, $panY + $titleH, $panX + $panW, $panY + $titleH);
-    $py = $panY + $titleH + 1;
+    // Section 1 bottom border (fixed position)
+    $sec1BottomY = $panY + $titleH;
+    $pdf->SetDrawColor(0, 0, 0);
+    $pdf->SetLineWidth(0.4);
+    $pdf->Line($panX, $sec1BottomY, $panX + $panW, $sec1BottomY);
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SECTION 2 — Legend  (middle ~90 mm)
+    // SECTION 2 — Legend  (fixed height: $legendH mm)
     // ═════════════════════════════════════════════════════════════════════════
-    $legendStartY = $panY + $titleH;
-    $legendH      = 100;
+    $sec2Y = $sec1BottomY;
 
-    // "Legend" header
     $pdf->SetFont('Arial', 'B', 7);
     $pdf->SetTextColor(11, 42, 74);
-    $pdf->SetXY($panX + 2, $py);
-    $pdf->Cell($panW - 4, 5, 'Legend', 0, 2, 'L');
-    $py = $pdf->GetY() + 1;
+    $pdf->SetXY($panX + 2, $sec2Y + 1.5);
+    $pdf->Cell($panW - 4, 5, 'Legend', 0, 0, 'L');
 
-    // Land use categories with colour swatches
-    // Each entry: [R, G, B, label]
+    $legendItemsY = $sec2Y + 7.5;  // fixed Y where legend items start
+
+    // Land use categories: [R, G, B, label]
     $landUseCategories = [
         [0,   100, 180, 'Coastal Land Area'],
         [0,   140,  70, 'Ecosystem Forest Land'],
@@ -289,103 +334,116 @@ function generate_vicinity_map_pdf(
         [40,  120, 180, 'Water / Land / River Land Areas'],
     ];
 
-    $swatchW = 5; $swatchH = 3.8; $rowH = 4.2;
-    $col1X = $panX + 2;
-    $col2X = $panX + 2 + ($panW / 2);
-    $colW  = ($panW / 2) - 3;
+    $total    = count($landUseCategories);
+    $half     = (int)ceil($total / 2);
+    $swatchW  = 5;
+    $swatchH  = 3.5;
+    $rowH     = 4.5;
+
+    // Column widths — each column is half the panel minus padding
+    $colW    = ($panW / 2) - 4;   // ~40 mm per column
+    $col1X   = $panX + 2;
+    $col2X   = $panX + ($panW / 2) + 2;
 
     $pdf->SetDrawColor(80, 80, 80);
     $pdf->SetLineWidth(0.15);
-    $pdf->SetFont('Arial', '', 5);
+    $pdf->SetFont('Arial', '', 4.8);
 
-    $half = (int)ceil(count($landUseCategories) / 2);
-    for ($i = 0; $i < count($landUseCategories); $i++) {
+    for ($i = 0; $i < $total; $i++) {
         [$r, $g, $b, $label] = $landUseCategories[$i];
 
         if ($i < $half) {
             $cx = $col1X;
-            $cy = $py + ($i * $rowH);
+            $cy = $legendItemsY + ($i * $rowH);
         } else {
             $cx = $col2X;
-            $cy = $py + (($i - $half) * $rowH);
+            $cy = $legendItemsY + (($i - $half) * $rowH);
         }
 
         // Colour swatch
         $pdf->SetFillColor($r, $g, $b);
-        $pdf->Rect($cx, $cy + 0.3, $swatchW, $swatchH, 'FD');
+        $pdf->Rect($cx, $cy + 0.4, $swatchW, $swatchH, 'FD');
 
-        // Label
+        // Label — constrained to column width so it never overflows the panel
         $pdf->SetTextColor(30, 30, 30);
         $pdf->SetXY($cx + $swatchW + 1.5, $cy + 0.2);
         $pdf->Cell($colW - $swatchW - 2, $rowH, $label, 0, 0, 'L');
     }
 
-    $py = $legendStartY + $legendH;
-
-    // Section 2 bottom border
-    $pdf->SetDrawColor(0, 0, 0); $pdf->SetLineWidth(0.4);
-    $pdf->Line($panX, $py, $panX + $panW, $py);
-    $py += 1;
+    // Section 2 bottom border (fixed position)
+    $sec2BottomY = $sec2Y + $legendH;
+    $pdf->SetDrawColor(0, 0, 0);
+    $pdf->SetLineWidth(0.4);
+    $pdf->Line($panX, $sec2BottomY, $panX + $panW, $sec2BottomY);
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SECTION 3 — Inset map + Technical / Signature block  (bottom ~50 mm)
+    // SECTION 3 — Inset map + Signature block  (remaining height: $sigH mm)
     // ═════════════════════════════════════════════════════════════════════════
-    $sigStartY = $py;
-    $sigH      = $panY + $panH - $sigStartY;
+    $sec3Y = $sec2BottomY;
+    $sec3H = $panY + $panH - $sec3Y;   // remaining height (should be ~40 mm)
 
-    // Inset map — left half of the bottom section
-    $insetX = $panX + 1;
-    $insetY = $sigStartY + 1;
-    $insetW = ($panW / 2) - 2;
-    $insetH = $sigH - 2;
+    // Guard: ensure there is enough room to draw
+    if ($sec3H >= 10) {
+        $insetPad = 1.5;
+        $insetX   = $panX + $insetPad;
+        $insetY   = $sec3Y + $insetPad;
+        $insetW   = ($panW / 2) - ($insetPad * 2);
+        $insetH   = $sec3H - ($insetPad * 2);
 
-    $pdf->Image($insetTmp, $insetX, $insetY, $insetW, $insetH, $fpdfInset);
-    $pdf->SetDrawColor(0, 0, 0); $pdf->SetLineWidth(0.3);
-    $pdf->Rect($insetX, $insetY, $insetW, $insetH);
+        $pdf->Image($insetTmp, $insetX, $insetY, $insetW, $insetH, $fpdfInset);
+        $pdf->SetDrawColor(0, 0, 0);
+        $pdf->SetLineWidth(0.3);
+        $pdf->Rect($insetX, $insetY, $insetW, $insetH);
 
-    // Inset label
-    $pdf->SetFont('Arial', 'I', 4.5);
-    $pdf->SetTextColor(60, 60, 60);
-    $pdf->SetXY($insetX, $insetY + $insetH - 4);
-    $pdf->Cell($insetW, 4, 'Municipality, City', 0, 0, 'C');
+        // Inset caption
+        $pdf->SetFont('Arial', 'I', 4.5);
+        $pdf->SetTextColor(60, 60, 60);
+        $pdf->SetXY($insetX, $insetY + $insetH - 4.5);
+        $pdf->Cell($insetW, 4, 'Location Overview', 0, 0, 'C');
 
-    // Technical / Signature block — right half of the bottom section
-    $sigX = $panX + ($panW / 2) + 1;
-    $sigY = $sigStartY + 1;
-    $sigW = ($panW / 2) - 3;
+        // Signature / technical block — right half of section 3
+        $sigBlockX = $panX + ($panW / 2) + $insetPad;
+        $sigBlockY = $sec3Y + $insetPad;
+        $sigBlockW = ($panW / 2) - ($insetPad * 2);
+        $sigBlockH = $sec3H - ($insetPad * 2);
 
-    $pdf->SetDrawColor(160, 160, 160); $pdf->SetLineWidth(0.2);
+        $fields  = [
+            ['Date',     date('F d, Y')],
+            ['Prepared', ''],
+            ['Checked',  ''],
+            ['Approved', ''],
+        ];
+        $fieldH  = $sigBlockH / count($fields);
 
-    $fields = [
-        ['Date',     date('F d, Y')],
-        ['Prepared', ''],
-        ['Checked',  ''],
-        ['Approved', ''],
-    ];
+        $pdf->SetDrawColor(160, 160, 160);
+        $pdf->SetLineWidth(0.2);
 
-    $fieldH = ($sigH - 4) / count($fields);
-    foreach ($fields as $idx => [$label, $value]) {
-        $fy = $sigY + ($idx * $fieldH);
+        foreach ($fields as $idx => [$fieldLabel, $fieldValue]) {
+            $fy = $sigBlockY + ($idx * $fieldH);
 
-        // Row border
-        $pdf->Rect($sigX, $fy, $sigW, $fieldH);
+            $pdf->Rect($sigBlockX, $fy, $sigBlockW, $fieldH);
 
-        // Label
-        $pdf->SetFont('Arial', '', 4.5);
-        $pdf->SetTextColor(100, 100, 100);
-        $pdf->SetXY($sigX + 1, $fy + 1);
-        $pdf->Cell($sigW - 2, 3, $label . ':', 0, 2, 'L');
+            $pdf->SetFont('Arial', '', 4.5);
+            $pdf->SetTextColor(100, 100, 100);
+            $pdf->SetXY($sigBlockX + 1, $fy + 1);
+            $pdf->Cell($sigBlockW - 2, 3, $fieldLabel . ':', 0, 0, 'L');
 
-        // Value / signature line
-        if ($value !== '') {
-            $pdf->SetFont('Arial', 'B', 5);
-            $pdf->SetTextColor(11, 42, 74);
-            $pdf->SetXY($sigX + 1, $fy + 4.5);
-            $pdf->Cell($sigW - 2, 3, $value, 0, 0, 'L');
-        } else {
-            // Blank signature line
-            $pdf->SetDrawColor(160, 160, 160); $pdf->SetLineWidth(0.2);
-            $pdf->Line($sigX + 2, $fy + $fieldH - 3, $sigX + $sigW - 2, $fy + $fieldH - 3);
+            if ($fieldValue !== '') {
+                $pdf->SetFont('Arial', 'B', 5);
+                $pdf->SetTextColor(11, 42, 74);
+                $pdf->SetXY($sigBlockX + 1, $fy + 4.5);
+                $pdf->Cell($sigBlockW - 2, 3, $fieldValue, 0, 0, 'L');
+            } else {
+                // Blank signature line
+                $pdf->SetDrawColor(160, 160, 160);
+                $pdf->SetLineWidth(0.2);
+                $pdf->Line(
+                    $sigBlockX + 2,
+                    $fy + $fieldH - 3,
+                    $sigBlockX + $sigBlockW - 2,
+                    $fy + $fieldH - 3
+                );
+            }
         }
     }
 
@@ -393,18 +451,22 @@ function generate_vicinity_map_pdf(
     $pdf->SetFont('Arial', 'I', 4.5);
     $pdf->SetTextColor(100, 100, 100);
     $pdf->SetXY($panX + 1, $panY + $panH - 5);
-    $pdf->Cell($panW - 2, 4,
+    $pdf->Cell(
+        $panW - 2, 4,
         sprintf('Lat: %s  Lng: %s', number_format($lat, 6), number_format($lng, 6)),
-        0, 0, 'C');
+        0, 0, 'C'
+    );
 
     // ── Save PDF ──────────────────────────────────────────────────────────────
     $outDir = __DIR__ . '/../storage/vicinity_maps';
-    if (!is_dir($outDir)) { mkdir($outDir, 0775, true); }
+    if (!is_dir($outDir)) {
+        mkdir($outDir, 0775, true);
+    }
 
     $filename = 'vicinity_map_'
-              . preg_replace('/[^A-Za-z0-9\-]/', '_', $registryNumber)
-              . '_' . date('Ymd_His') . '.pdf';
-    $outPath  = $outDir . '/' . $filename;
+        . preg_replace('/[^A-Za-z0-9\-]/', '_', $registryNumber)
+        . '_' . date('Ymd_His') . '.pdf';
+    $outPath = $outDir . '/' . $filename;
 
     $pdf->Output('F', $outPath);
 

@@ -52,9 +52,9 @@ function encrypt_sensitive(?string $plain): array
         return ['ciphertext' => null, 'nonce' => null];
     }
 
-    $key = hex2bin($config['security']['encryption_key_hex']);
+    $key = @hex2bin($config['security']['encryption_key_hex'] ?? '');
     if ($key === false || strlen($key) !== 32) {
-        throw new RuntimeException('Invalid encryption key. Configure config/env.php.');
+        throw new RuntimeException('Invalid encryption key. Configure a 64-character hex value in config/env.php.');
     }
 
     $nonce = random_bytes(12);
@@ -74,7 +74,7 @@ function decrypt_sensitive(?string $ciphertext, ?string $nonceHex): ?string
         return null;
     }
 
-    $key = hex2bin($config['security']['encryption_key_hex']);
+    $key = @hex2bin($config['security']['encryption_key_hex'] ?? '');
     $payload = base64_decode($ciphertext, true);
     $nonce = hex2bin($nonceHex);
     if ($key === false || $payload === false || $nonce === false || strlen($payload) < 16) {

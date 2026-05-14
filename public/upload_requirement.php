@@ -1,6 +1,9 @@
 <?php
+// Buffer all output so stray PHP warnings/notices cannot corrupt the JSON response
+ob_start();
 require_once __DIR__ . '/../app/bootstrap.php';
 
+// Set JSON header immediately after bootstrap, before any business logic
 header('Content-Type: application/json');
 
 try {
@@ -97,4 +100,14 @@ try {
 } catch (Throwable $exception) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'message' => $exception->getMessage()]);
+}
+// Discard any warnings/notices that leaked into the buffer, then send clean JSON
+$buffered = ob_get_clean();
+$decoded  = json_decode($buffered);
+if ($decoded === null) {
+    // Buffer was corrupted — extract the last valid JSON object from it
+    preg_match('/(\{.*\})\s*$/s', $buffered, $m);
+    echo $m[1] ?? json_encode(['ok' => false, 'message' => 'Server error. Check PHP error logs.']);
+} else {
+    echo $buffered;
 }

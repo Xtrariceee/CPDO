@@ -3,7 +3,9 @@
  * Mark one or more notifications as read.
  * Accepts JSON POST: { "csrf_token": "...", "ids": [1, 2, 3] }
  */
+ob_start();
 require_once __DIR__ . '/../app/bootstrap_cpdo.php';
+ob_clean();
 
 header('Content-Type: application/json');
 

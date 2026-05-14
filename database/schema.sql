@@ -325,6 +325,9 @@ CREATE TABLE inspection_photos (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- MEETINGS
+-- One row per application meeting. Minutes are stored as structured plain text.
+-- Meeting history (saves, PDF generations) is tracked via audit_logs with
+-- action = 'TWG_MINUTES_SAVED' and entity_type = 'meetings'.
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE meetings (
     id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -344,6 +347,11 @@ CREATE TABLE meetings (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- VOTES (TWG deliberation)
+-- NOTE: The voting system has been superseded by the Minutes of Meeting workflow.
+-- The committee decision is now derived from the TWG meeting minutes saved in
+-- the meetings table. This table is retained for historical data only.
+-- New applications use phase_status = 'DELIBERATION' after minutes are saved,
+-- and the Zoning Officer generates the resolution directly from the minutes.
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE votes (
     id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -371,6 +379,7 @@ CREATE TABLE final_outputs (
     application_id        BIGINT UNSIGNED NOT NULL,
     signature_file_path   VARCHAR(255) NULL,
     resolution_file_path  VARCHAR(255) NULL,
+    resolution_data       JSON         NULL COMMENT 'Resolution field data saved by Zoning Officer; used to pre-fill AO endorsement form',
     endorsement_number    VARCHAR(80)  NULL,
     uploaded_by           BIGINT UNSIGNED NULL,
     uploaded_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,

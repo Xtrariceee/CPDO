@@ -19,10 +19,14 @@ if (!$applicationId) {
 
 $application = officer_application($applicationId);
 
-// ── Fetch supporting data ─────────────────────────────────────────────────────
-$meeting = db()->prepare('SELECT * FROM meetings WHERE application_id = ? ORDER BY id DESC LIMIT 1');
-$meeting->execute([$applicationId]);
-$meetingRow = $meeting->fetch() ?: null;
+// ── Gate: resolution can only be generated after TWG minutes are saved ────────
+$meetingRow = latest_meeting_for_application($applicationId);
+$minutesSaved = $meetingRow && trim($meetingRow['minutes'] ?? '') !== '';
+
+if (!in_array($application['phase_status'], ['DELIBERATION', 'APPROVED', 'DISAPPROVED'], true)) {
+    $_SESSION['flash_error'] = 'The resolution can only be generated after the TWG has saved the Minutes of Meeting and the application is under deliberation.';
+    redirect('zoning-officer/index.php');
+}
 
 $inspection = db()->prepare('SELECT * FROM inspections WHERE application_id = ? ORDER BY id DESC LIMIT 1');
 $inspection->execute([$applicationId]);
@@ -68,6 +72,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         'resolution_number' => $data['resolution_number'],
     ]);
 
+    // Save resolution data as a draft in final_outputs so the Admin Officer
+    // can see it immediately and validate/issue the endorsement.
+    $existingFO = db()->prepare('SELECT id FROM final_outputs WHERE application_id = ? ORDER BY id DESC LIMIT 1');
+    $existingFO->execute([$applicationId]);
+    $existingFORow = $existingFO->fetch();
+
+    $resDataJson = json_encode($data, JSON_UNESCAPED_UNICODE);
+
+    if ($existingFORow) {
+        db()->prepare(
+            'UPDATE final_outputs SET resolution_data = ?, endorsement_number = ?, uploaded_by = ? WHERE id = ?'
+        )->execute([$resDataJson, $data['resolution_number'] ?: null, (int)$user['id'], (int)$existingFORow['id']]);
+    } else {
+        db()->prepare(
+            'INSERT INTO final_outputs (application_id, resolution_data, endorsement_number, uploaded_by) VALUES (?, ?, ?, ?)'
+        )->execute([$applicationId, $resDataJson, $data['resolution_number'] ?: null, (int)$user['id']]);
+    }
+
+    // Notify Admin Officer that the resolution is ready for validation
+    notify_role(
+        ROLE_ADMIN_OFFICER,
+        $applicationId,
+        'Resolution Ready for Validation',
+        'The Zoning Officer has generated the legislative resolution for application '
+        . $application['registry_number'] . '. Please review and issue the official endorsement.'
+    );
+
     generate_resolution_pdf($data);
     // generate_resolution_pdf() calls exit — nothing runs after this
 }
@@ -85,9 +116,24 @@ $defaultCurrentZone = $existingLandUseMap[$application['existing_land_use'] ?? '
 
 $defaultFindings = '';
 if ($inspectionRow && !empty($inspectionRow['findings'])) {
-    // Extract just the first 400 chars of findings for the form default
     $defaultFindings = mb_substr(trim($inspectionRow['findings']), 0, 400);
     if (mb_strlen($inspectionRow['findings']) > 400) { $defaultFindings .= '...'; }
+}
+
+// Also pull key points from the meeting minutes if available
+$minutesSummary = '';
+if ($meetingRow && !empty($meetingRow['minutes'])) {
+    // Extract the "a. Reports" section as the primary findings source
+    $minutesText = $meetingRow['minutes'];
+    if (preg_match('/a\. Reports:\s*(.*?)(?=b\. Open Issues:|$)/si', $minutesText, $m)) {
+        $minutesSummary = trim($m[1]);
+    }
+    if ($minutesSummary === '' && $defaultFindings === '') {
+        $minutesSummary = mb_substr(trim($minutesText), 0, 400);
+    }
+}
+if ($defaultFindings === '' && $minutesSummary !== '') {
+    $defaultFindings = $minutesSummary;
 }
 
 require __DIR__ . '/../partials/header.php';
@@ -140,6 +186,21 @@ textarea.res-control { min-height: 100px; resize: vertical; line-height: 1.6; }
             <?= e(workflow_status_label($application['phase_status'])) ?>
         </span>
     </div>
+
+    <?php if ($meetingRow && $minutesSaved): ?>
+    <div class="gov-card p-3 mb-4" style="border-left:4px solid #1d6aad;background:#f4f8fc;">
+        <p class="eyebrow mb-1" style="font-size:.62rem;">TWG Minutes of Meeting</p>
+        <p class="mb-0 small text-secondary">
+            Meeting minutes have been saved
+            <?php if (!empty($meetingRow['scheduled_at'])): ?>
+                for the meeting scheduled on <strong><?= e(date('F j, Y · h:i A', strtotime($meetingRow['scheduled_at']))) ?></strong>.
+            <?php else: ?>
+                for this application.
+            <?php endif; ?>
+            The committee findings field below has been pre-filled from the minutes.
+        </p>
+    </div>
+    <?php endif; ?>
 
     <form class="res-card" method="post" id="resolutionForm">
         <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">

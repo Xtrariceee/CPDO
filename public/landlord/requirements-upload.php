@@ -1148,6 +1148,12 @@ if ($failedDocs):
                 credentials: 'same-origin'
             })
             .then(function (r) {
+                var contentType = r.headers.get('content-type') || '';
+                if (!contentType.includes('application/json')) {
+                    return r.text().then(function (text) {
+                        throw new Error('Server error — unexpected response. Check PHP error logs.');
+                    });
+                }
                 return r.json();
             })
             .then(function (p) {

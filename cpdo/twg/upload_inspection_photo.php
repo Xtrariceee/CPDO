@@ -3,7 +3,9 @@
  * AJAX endpoint — upload a single inspection site photo.
  * Returns JSON: { ok, photo_id, thumb_url, message }
  */
+ob_start();
 require_once __DIR__ . '/../../app/bootstrap_cpdo.php';
+ob_clean();
 
 header('Content-Type: application/json');
 

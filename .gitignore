@@ -11,8 +11,12 @@ config/env.php
 
 # ── Generated / downloaded assets (not source code) ───────────
 /storage/cacert.pem
-/storage/vicinity_maps/
-/storage/tmp/
+/storage/vicinity_maps/*
+!/storage/vicinity_maps/.gitkeep
+/storage/final_outputs/*
+!/storage/final_outputs/.gitkeep
+/storage/tmp/*
+!/storage/tmp/.gitkeep
 
 # ── OS & editor noise ──────────────────────────────────────────
 .DS_Store

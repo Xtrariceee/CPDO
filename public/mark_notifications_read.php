@@ -1,5 +1,7 @@
 <?php
+ob_start();
 require_once __DIR__ . '/../app/bootstrap.php';
+ob_clean();
 header('Content-Type: application/json');
 try {
     $user = require_login();

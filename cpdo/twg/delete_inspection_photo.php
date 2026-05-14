@@ -3,7 +3,9 @@
  * AJAX endpoint — delete a single inspection photo.
  * Only the uploader or a system admin can delete.
  */
+ob_start();
 require_once __DIR__ . '/../../app/bootstrap_cpdo.php';
+ob_clean();
 
 header('Content-Type: application/json');
 

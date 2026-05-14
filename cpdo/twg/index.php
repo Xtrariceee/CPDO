@@ -4,7 +4,6 @@ $user = require_role([ROLE_TWG, ROLE_SYSTEM_ADMIN]);
 
 $inspection = officer_applications(['INSPECTION_SCHEDULED']);
 $meeting    = officer_applications(['FOR_MEETING']);
-$voting     = officer_applications(['DELIBERATION']);
 
 require __DIR__ . '/../partials/header.php';
 ?>
@@ -27,25 +26,18 @@ require __DIR__ . '/../partials/header.php';
 
 <!-- Summary cards -->
 <div class="row g-3 mb-4">
-    <div class="col-md-4">
+    <div class="col-md-6">
         <a class="zo-card" href="inspection.php">
             <div class="zo-card-title">Inspection</div>
             <div class="zo-card-count"><?= count($inspection) ?></div>
             <div class="zo-card-note">Applications scheduled for site inspection</div>
         </a>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-6">
         <a class="zo-card" href="meeting.php">
             <div class="zo-card-title">Meeting</div>
             <div class="zo-card-count"><?= count($meeting) ?></div>
             <div class="zo-card-note">Applications pending TWG meeting</div>
-        </a>
-    </div>
-    <div class="col-md-4">
-        <a class="zo-card" href="voting.php">
-            <div class="zo-card-title">Voting</div>
-            <div class="zo-card-count"><?= count($voting) ?></div>
-            <div class="zo-card-note">Applications under deliberation</div>
         </a>
     </div>
 </div>
@@ -66,7 +58,7 @@ require __DIR__ . '/../partials/header.php';
                         </tr>
                     </thead>
                     <tbody>
-                    <?php foreach (officer_applications(['INSPECTION_SCHEDULED','FOR_MEETING','DELIBERATION']) as $app):
+                    <?php foreach (officer_applications(['INSPECTION_SCHEDULED','FOR_MEETING']) as $app):
                         // Fetch inspection schedule for this application
                         $inspRow = null;
                         if ($app['phase_status'] === 'INSPECTION_SCHEDULED') {
@@ -104,10 +96,8 @@ require __DIR__ . '/../partials/header.php';
                             <td>
                                 <?php if ($app['phase_status'] === 'INSPECTION_SCHEDULED'): ?>
                                     <a class="btn btn-sm btn-primary" href="inspection.php?id=<?= (int)$app['id'] ?>">Inspect</a>
-                                <?php elseif ($app['phase_status'] === 'FOR_MEETING'): ?>
-                                    <a class="btn btn-sm btn-primary" href="meeting.php?id=<?= (int)$app['id'] ?>">Meeting</a>
                                 <?php else: ?>
-                                    <a class="btn btn-sm btn-primary" href="voting.php?id=<?= (int)$app['id'] ?>">Vote</a>
+                                    <a class="btn btn-sm btn-primary" href="meeting.php?id=<?= (int)$app['id'] ?>">Meeting</a>
                                 <?php endif; ?>
                             </td>
                         </tr>
