@@ -381,6 +381,7 @@ CREATE TABLE final_outputs (
     resolution_file_path  VARCHAR(255) NULL,
     resolution_data       JSON         NULL COMMENT 'Resolution field data saved by Zoning Officer; used to pre-fill AO endorsement form',
     endorsement_number    VARCHAR(80)  NULL,
+    emailed_at            DATETIME     NULL COMMENT 'Timestamp when AO notified applicant via email',
     uploaded_by           BIGINT UNSIGNED NULL,
     uploaded_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_final_outputs_application

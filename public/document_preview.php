@@ -42,7 +42,8 @@ if ($type === 'final_output') {
     };
 
     header('Content-Type: ' . $mime);
-    header('Content-Disposition: inline; filename="endorsement-resolution.' . $ext . '"');
+    $download = isset($_GET['download']) && ($_GET['download'] === '1' || strtolower($_GET['download']) === 'true');
+    header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="endorsement-resolution.' . $ext . '"');
     header('X-Content-Type-Options: nosniff');
     header('Content-Length: ' . filesize($absPath));
     readfile($absPath);

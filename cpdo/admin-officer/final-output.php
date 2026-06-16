@@ -155,9 +155,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($existingRow) {
         db()->prepare('UPDATE final_outputs SET resolution_file_path = ?, endorsement_number = ?, uploaded_by = ?, uploaded_at = NOW() WHERE id = ?')
            ->execute([$relPath, $endorsementNumber, (int)$user['id'], (int)$existingRow['id']]);
+        $finalOutputId = (int)$existingRow['id'];
     } else {
-        db()->prepare('INSERT INTO final_outputs (application_id, resolution_file_path, endorsement_number, uploaded_by) VALUES (?, ?, ?, ?)')
-           ->execute([$applicationId, $relPath, $endorsementNumber, (int)$user['id']]);
+        $insertStmt = db()->prepare('INSERT INTO final_outputs (application_id, resolution_file_path, endorsement_number, uploaded_by) VALUES (?, ?, ?, ?)');
+        $insertStmt->execute([$applicationId, $relPath, $endorsementNumber, (int)$user['id']]);
+        $finalOutputId = (int)db()->lastInsertId();
     }
 
     advance_application($applicationId, 'APPROVED', 14);
@@ -172,9 +174,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         . 'Please log in to view and download the official resolution document.'
     );
 
+    $finalOutputUrl = rtrim($config['app']['base_url'] ?? '', '/') . '/document_preview.php?type=final_output&id=' . $finalOutputId;
+    $finalOutputDownloadUrl = $finalOutputUrl . '&download=1';
+
+    // Fetch inspection photos for the email (load here in POST context)
+    $inspectionPhotoUrls = [];
+    $insStmt = db()->prepare('SELECT id FROM inspections WHERE application_id = ? ORDER BY id DESC LIMIT 1');
+    $insStmt->execute([$applicationId]);
+    $insRow = $insStmt->fetch();
+    if ($insRow) {
+        $photoStmt = db()->prepare('SELECT id FROM inspection_photos WHERE inspection_id = ? ORDER BY uploaded_at ASC');
+        $photoStmt->execute([(int)$insRow['id']]);
+        while ($photo = $photoStmt->fetch()) {
+            $inspectionPhotoUrls[] = rtrim($config['app']['base_url'] ?? '', '/') . '/twg/inspection_photo.php?id=' . (int)$photo['id'];
+        }
+    }
+
+    $htmlBody = '<p>Dear ' . e($application['account_name']) . ',</p>'
+        . '<p>Your application <strong>' . e($application['registry_number']) . '</strong> has been approved and the official endorsement document is now available.</p>'
+        . '<p><strong>Endorsement No.:</strong> ' . e($endorsementNumber) . '</p>'
+        . '<p><strong>Project:</strong> ' . e($application['property_title']) . '</p>'
+        . '<p>You may view, download, and print the endorsement by clicking the button below.</p>'
+        . '<p><a href="' . e($finalOutputUrl) . '" style="display:inline-block;padding:12px 18px;background:#0d6efd;color:#ffffff;text-decoration:none;border-radius:6px;">View Endorsement</a></p>'
+        . '<p><a href="' . e($finalOutputDownloadUrl) . '" style="display:inline-block;padding:12px 18px;background:#198754;color:#ffffff;text-decoration:none;border-radius:6px;margin-top:8px;">Download Endorsement</a></p>';
+
+    if (!empty($inspectionPhotoUrls)) {
+        $htmlBody .= '<p>The following site inspection photos are available for reference:</p><ul>';
+        foreach ($inspectionPhotoUrls as $photoUrl) {
+            $htmlBody .= '<li><a href="' . e($photoUrl) . '">' . e($photoUrl) . '</a></li>';
+        }
+        $htmlBody .= '</ul>';
+    }
+
+    if ($adminNotes) {
+        $htmlBody .= '<p><strong>Note from the Administrative Officer:</strong> ' . e($adminNotes) . '</p>';
+    }
+
+    $htmlBody .= '<p>Thank you,<br>City Planning and Development Office</p>';
+
+    $altBody = 'Your application ' . $application['registry_number'] . ' has been approved. Endorsement No. ' . $endorsementNumber . '. ';
+    if ($adminNotes) {
+        $altBody .= 'Note from the Administrative Officer: ' . $adminNotes . ' ';
+    }
+    $altBody .= 'View the endorsement here: ' . $finalOutputUrl;
+
+    send_email_to_user(
+        (int)$application['landlord_id'],
+        'Your Endorsement is Ready — ' . $application['registry_number'],
+        $htmlBody,
+        $altBody
+    );
+
+    // Mark final_output row with emailed timestamp (non-fatal if column missing)
+    try {
+        db()->prepare('UPDATE final_outputs SET emailed_at = NOW() WHERE id = ?')
+            ->execute([$finalOutputId]);
+    } catch (Throwable $e) {
+        // Column may not exist in older schema — non-fatal, skip silently
+    }
+
     audit_log((int)$user['id'], 'AO_RESOLUTION_GENERATED_ENDORSEMENT_ISSUED', 'applications', $applicationId, [
         'endorsement_number' => $endorsementNumber,
         'resolution_path'    => $relPath,
+        'inspection_photos'  => $inspectionPhotoUrls,
     ]);
 
     $_SESSION['flash_success'] = 'Resolution PDF generated. Endorsement No. ' . $endorsementNumber . ' issued. Applicant has been notified.';

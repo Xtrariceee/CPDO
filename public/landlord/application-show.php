@@ -255,11 +255,23 @@ require __DIR__ . '/../partials/header.php';
                         Endorsement No.: <strong><?= e($finalRow['endorsement_number'] ?? 'N/A') ?></strong><br>
                         Issued: <?= e($finalRow['uploaded_at'] ? date('F j, Y', strtotime($finalRow['uploaded_at'])) : '—') ?>
                     </p>
-                    <a class="btn btn-success btn-sm w-100 mb-2"
-                       href="<?= e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?type=final_output&id=' . (int)$finalRow['id']) ?>"
-                       target="_blank" rel="noopener">
-                        View Endorsement / Resolution
-                    </a>
+                    <div class="d-grid gap-2">
+                        <a class="btn btn-success btn-sm"
+                           href="<?= e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?type=final_output&id=' . (int)$finalRow['id']) ?>"
+                           target="_blank" rel="noopener">
+                            View Endorsement / Resolution
+                        </a>
+                        <a class="btn btn-outline-primary btn-sm"
+                           href="<?= e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?type=final_output&id=' . (int)$finalRow['id'] . '&download=1') ?>"
+                           download="endorsement-resolution.pdf">
+                            Download Endorsement
+                        </a>
+                        <a class="btn btn-outline-secondary btn-sm"
+                           href="<?= e(rtrim($config['app']['base_url'], '/') . '/document_preview.php?type=final_output&id=' . (int)$finalRow['id']) ?>"
+                           target="_blank" rel="noopener">
+                            Open &amp; Print Endorsement
+                        </a>
+                    </div>
                 <?php else: ?>
                     <p class="small text-secondary mb-0">The endorsement document will appear here once issued by the Administrative Officer.</p>
                 <?php endif; ?>

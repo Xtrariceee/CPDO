@@ -225,7 +225,47 @@ HTML;
         return false;
     }
 }
+function send_email(string $toEmail, string $toName, string $subject, string $htmlBody, string $altBody, array $attachments = []): bool
+{
+    try {
+        $mail = build_mailer();
+        $mail->addAddress($toEmail, $toName);
+        $mail->Subject = $subject;
+        $mail->isHTML(true);
+        $mail->Body = $htmlBody;
+        $mail->AltBody = $altBody;
 
+        foreach ($attachments as $attachment) {
+            if (!empty($attachment['path']) && file_exists($attachment['path'])) {
+                $mail->addAttachment($attachment['path'], $attachment['name'] ?? basename($attachment['path']));
+            }
+        }
+
+        $mail->send();
+        return true;
+    } catch (MailException | RuntimeException $e) {
+        $reason = $e->getMessage();
+        error_log('[CPDO Mailer] email failed to ' . $toEmail . ': ' . $reason);
+        audit_log(null, 'EMAIL_SEND_FAILED', 'users', null, [
+            'email'  => $toEmail,
+            'subject'=> $subject,
+            'reason' => $reason,
+        ]);
+        return false;
+    }
+}
+
+function send_email_to_user(int $userId, string $subject, string $htmlBody, string $altBody, array $attachments = []): bool
+{
+    $stmt = db()->prepare('SELECT email, CONCAT_WS(" ", first_name, middle_name, last_name) AS full_name FROM users WHERE id = ?');
+    $stmt->execute([$userId]);
+    $user = $stmt->fetch();
+    if (!$user || !filter_var($user['email'] ?? '', FILTER_VALIDATE_EMAIL)) {
+        return false;
+    }
+
+    return send_email((string)$user['email'], trim((string)$user['full_name']) ?: (string)$user['email'], $subject, $htmlBody, $altBody, $attachments);
+}
 /* ═══════════════════════════════════════════════════════════════
    issue_user_otp  — writes OTP to DB then sends the email
    ═══════════════════════════════════════════════════════════════ */

@@ -46,7 +46,7 @@ return [
     'google' => [
         'client_id'     => '',
         'client_secret' => '',
-        'redirect_uri'  => '',
+        'redirect_uri'  => 'http://localhost/LandReclassification/public/oauth_google_callback.php',
         'maps_api_key'  => '',   // ← Add your Google Maps JavaScript API + Static Maps API key here
     ],
     'paymongo' => [
@@ -59,8 +59,8 @@ return [
         'port'       => 587,
         'encryption' => 'tls',
         'username'   => '',   // ← REPLACE with your Gmail address
-        'password'   => '', // ← REPLACE with 16-char App Password
+        'password'   => '',   // ← REPLACE with 16-char App Password
         'from_email' => '',   // ← REPLACE with same Gmail address
-        'from_name'  => '',
+        'from_name'  => 'CPDO Land Reclassification Portal',
     ],
 ];
