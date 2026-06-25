@@ -4,6 +4,22 @@ require_once __DIR__ . '/../../app/bootstrap.php';
 $user = require_role([ROLE_LANDLORD]);
 verify_csrf();
 
+/* ── address/title carried from compliance-gateway ───────────────────────── */
+$propertyId = (int)($_GET['property_id'] ?? $_POST['property_id'] ?? 0);
+$property = null;
+if ($propertyId) {
+    $stmt = db()->prepare('SELECT * FROM properties WHERE id = ? AND landlord_id = ?');
+    $stmt->execute([$propertyId, (int)$user['id']]);
+    $property = $stmt->fetch();
+    if (!$property) {
+        http_response_code(404);
+        exit('Property not found.');
+    }
+}
+
+$prefilledAddress = trim($_GET['address'] ?? $_POST['property_address'] ?? ($property['address'] ?? ''));
+$prefilledTitle   = trim($_GET['title'] ?? $_POST['property_title'] ?? ($property['title'] ?? ''));
+
 /*
 |--------------------------------------------------------------------------
 | Required documents for already-compliant rental/property verification
@@ -18,14 +34,7 @@ $requiredDocuments = [
         'title' => 'Certificate of Occupancy',
         'description' => 'Certificate confirming that the building or unit is approved for occupancy.',
     ],
-    'barangay_business_clearance' => [
-        'title' => 'Barangay Business Clearance',
-        'description' => 'Barangay-level clearance for the rental or business activity.',
-    ],
-    'mayors_business_permit' => [
-        'title' => "Mayor's / Business Permit",
-        'description' => 'Valid mayor’s permit or business permit for the property or rental operation.',
-    ],
+    
     'fire_safety_inspection_certificate' => [
         'title' => 'Fire Safety Inspection Certificate (FSIC)',
         'description' => 'Fire safety clearance or certificate issued after fire safety inspection.',
@@ -57,8 +66,8 @@ if (!function_exists('skip_compliance_column_exists')) {
     function skip_compliance_column_exists(string $table, string $column): bool
     {
         try {
-            $stmt = db()->prepare('SHOW COLUMNS FROM ' . skip_compliance_ident($table) . ' LIKE ?');
-            $stmt->execute([$column]);
+            $stmt = db()->prepare('SHOW COLUMNS FROM ' . skip_compliance_ident($table) . ' LIKE ' . db()->quote($column));
+            $stmt->execute();
             return (bool)$stmt->fetchColumn();
         } catch (Throwable $exception) {
             return false;
@@ -66,61 +75,61 @@ if (!function_exists('skip_compliance_column_exists')) {
     }
 }
 
-if (!function_exists('skip_compliance_add_column_if_missing')) {
-    function skip_compliance_add_column_if_missing(string $table, string $column): void
-    {
-        if (skip_compliance_column_exists($table, $column)) {
-            return;
-        }
-
-        db()->exec(
-            'ALTER TABLE ' . skip_compliance_ident($table) .
-            ' ADD COLUMN ' . skip_compliance_ident($column) . ' VARCHAR(500) NULL'
-        );
-    }
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $propertyTitle = trim($_POST['property_title'] ?? '');
+    $propertyTitle   = trim($_POST['property_title']   ?? '');
+    $propertyAddress = trim($_POST['property_address'] ?? '');
 
     if ($propertyTitle === '') {
         $_SESSION['flash_error'] = 'Property title is required.';
-        redirect('landlord/skip-compliance.php');
+        $query = http_build_query(array_filter([
+            'address' => $prefilledAddress ?: $propertyAddress,
+            'title' => $prefilledTitle ?: $propertyTitle,
+            'property_id' => $propertyId ?: null,
+        ]));
+        redirect('landlord/compliance-verification.php' . ($query ? '?' . $query : ''));
     }
 
-    /*
-     * Add new columns automatically if they are missing.
-     * New columns:
-     * - building_permit_path
-     * - certificate_of_occupancy_path
-     * - barangay_business_clearance_path
-     * - mayors_business_permit_path
-     * - fire_safety_inspection_certificate_path
-     * - sanitary_permit_path
-     * - bir_registration_path
-     */
+    if ($propertyAddress === '') {
+        $_SESSION['flash_error'] = 'Property address is required so compliance can be tied to the correct property.';
+        $query = http_build_query(array_filter([
+            'address' => $prefilledAddress ?: $propertyAddress,
+            'title' => $prefilledTitle ?: $propertyTitle,
+            'property_id' => $propertyId ?: null,
+        ]));
+        redirect('landlord/compliance-verification.php' . ($query ? '?' . $query : ''));
+    }
+
     try {
-        foreach ($requiredDocuments as $key => $document) {
-            skip_compliance_add_column_if_missing('compliance_uploads', $key . '_path');
+        foreach ([
+            'property_address',
+            'building_permit_path',
+            'certificate_of_occupancy_path',
+            'fire_safety_inspection_certificate_path',
+            'sanitary_permit_path',
+            'bir_registration_path',
+        ] as $column) {
+            if (!skip_compliance_column_exists('compliance_uploads', $column)) {
+                throw new RuntimeException('Database schema is missing required compliance_uploads column: ' . $column);
+            }
         }
     } catch (Throwable $exception) {
-        $_SESSION['flash_error'] = 'Database update failed. Please add the new compliance document columns first.';
-        redirect('landlord/skip-compliance.php');
+        $_SESSION['flash_error'] = 'Database schema is missing required compliance document columns. Please update your database schema and try again.';
+        redirect('landlord/compliance-verification.php');
     }
 
     $uploadedPaths = [];
 
     foreach ($requiredDocuments as $key => $document) {
         if (empty($_FILES[$key]['name'])) {
-            $_SESSION['flash_error'] = 'Please upload all 7 required compliance documents.';
-            redirect('landlord/skip-compliance.php');
+            $_SESSION['flash_error'] = 'Please upload all required compliance documents.';
+            redirect('landlord/compliance-verification.php');
         }
 
         $path = secure_upload($_FILES[$key], 'compliance/' . $user['id']);
 
         if (!$path) {
             $_SESSION['flash_error'] = 'Upload failed for: ' . $document['title'];
-            redirect('landlord/skip-compliance.php');
+            redirect('landlord/compliance-verification.php');
         }
 
         $uploadedPaths[$key] = $path;
@@ -133,21 +142,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
      * Old columns are also populated for compatibility with older verification screens.
      */
     $insertData = [
-        'landlord_id' => (int)$user['id'],
-        'property_title' => $propertyTitle,
+        'landlord_id'      => (int)$user['id'],
+        'property_title'   => $propertyTitle,
+        'property_address' => $propertyAddress,
 
-        'building_permit_path' => $uploadedPaths['building_permit'],
-        'certificate_of_occupancy_path' => $uploadedPaths['certificate_of_occupancy'],
-        'barangay_business_clearance_path' => $uploadedPaths['barangay_business_clearance'],
-        'mayors_business_permit_path' => $uploadedPaths['mayors_business_permit'],
+        'building_permit_path'                    => $uploadedPaths['building_permit'],
+        'certificate_of_occupancy_path'           => $uploadedPaths['certificate_of_occupancy'],
         'fire_safety_inspection_certificate_path' => $uploadedPaths['fire_safety_inspection_certificate'],
-        'sanitary_permit_path' => $uploadedPaths['sanitary_permit'],
-        'bir_registration_path' => $uploadedPaths['bir_registration'],
+        'sanitary_permit_path'                    => $uploadedPaths['sanitary_permit'],
+        'bir_registration_path'                   => $uploadedPaths['bir_registration'],
     ];
 
     /*
      * Legacy compatibility.
-     * These columns existed in your old skip-compliance.php.
+     * These columns existed in your old compliance-verification.php.
      */
     if (skip_compliance_column_exists('compliance_uploads', 'approved_resolution_path')) {
         $insertData['approved_resolution_path'] = $uploadedPaths['building_permit'];
@@ -157,9 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $insertData['zoning_clearance_path'] = $uploadedPaths['certificate_of_occupancy'];
     }
 
-    if (skip_compliance_column_exists('compliance_uploads', 'proof_of_ownership_path')) {
-        $insertData['proof_of_ownership_path'] = $uploadedPaths['barangay_business_clearance'];
-    }
+    
 
     $columns = array_keys($insertData);
     $placeholders = array_fill(0, count($columns), '?');
@@ -173,15 +179,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     );
 
     $stmt->execute(array_values($insertData));
+    $complianceId = (int)$pdo->lastInsertId();
+
+    if ($propertyId) {
+        $updateStmt = $pdo->prepare(
+            'UPDATE properties SET compliance_upload_id = ? WHERE id = ? AND landlord_id = ?'
+        );
+        $updateStmt->execute([$complianceId, $propertyId, (int)$user['id']]);
+    }
 
     audit_log(
         (int)$user['id'],
         'SKIP_COMPLIANCE_SUBMITTED',
         'compliance_uploads',
-        (int)$pdo->lastInsertId()
+        $complianceId
     );
 
-    $_SESSION['flash_success'] = 'Compliance documents submitted. An Administrative Officer will verify them shortly.';
+    $_SESSION['flash_success'] = 'Documents submitted successfully. The System Admin will verify them shortly.';
+    if ($propertyId) {
+        redirect('landlord/property-form.php?id=' . $propertyId);
+    }
     redirect('landlord/dashboard.php');
 }
 
@@ -834,6 +851,7 @@ require __DIR__ . '/../partials/header.php';
         <main>
             <form class="skip-form-card" method="post" enctype="multipart/form-data" id="skip-form">
                 <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="property_id" value="<?= (int)$propertyId ?>">
 
                 <div class="skip-field">
                     <label class="skip-label" for="property_title">
@@ -844,9 +862,39 @@ require __DIR__ . '/../partials/header.php';
                         class="skip-control"
                         id="property_title"
                         name="property_title"
+                        type="text"
+                        value="<?= e($prefilledTitle) ?>"
                         required
                         placeholder="e.g. RNSR Apartment, Buhangin"
                     >
+                </div>
+
+                <div class="skip-field">
+                    <label class="skip-label" for="property_address">
+                        Property Address <span class="text-danger">*</span>
+                        <span style="font-weight:600;font-size:.78rem;text-transform:none;letter-spacing:0;color:#76684b;">
+                            (must match the address you intend to list)
+                        </span>
+                    </label>
+                    <?php if ($prefilledAddress): ?>
+                        <div style="padding:10px 14px;border-radius:10px;background:#fff8dd;border:1px solid #f0dfad;font-size:.88rem;font-weight:700;color:#241b0b;margin-bottom:6px;">
+                            <?= e($prefilledAddress) ?>
+                        </div>
+                        <input type="hidden" name="property_address" value="<?= e($prefilledAddress) ?>">
+                    <?php else: ?>
+                        <textarea
+                            class="skip-control"
+                            id="property_address"
+                            name="property_address"
+                            rows="2"
+                            required
+                            placeholder="e.g. Lot 12 Block 3, Brgy. Matina Aplaya, Davao City"
+                        ></textarea>
+                    <?php endif; ?>
+                    <p style="margin:6px 0 0;font-size:.76rem;color:#76684b;line-height:1.5;">
+                        Compliance verification is tied to this exact address. A verified record for a different address
+                        will <strong>not</strong> qualify another property.
+                    </p>
                 </div>
 
                 <?php $uploadCounter = 0; ?>
@@ -904,6 +952,8 @@ require __DIR__ . '/../partials/header.php';
                                 >
                                     Preview
                                 </button>
+
+                                
                             </div>
                         </div>
                     </div>

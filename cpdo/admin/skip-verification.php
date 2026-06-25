@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/../../app/bootstrap_cpdo.php';
-$user = require_role([ROLE_ADMIN_OFFICER, ROLE_SYSTEM_ADMIN]);
+$user = require_role([ROLE_SYSTEM_ADMIN]);
 verify_csrf();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -10,8 +10,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         db()->prepare('UPDATE compliance_uploads SET status=?,officer_notes=?,reviewed_by=?,reviewed_at=NOW() WHERE id=?')
            ->execute([$status, $_POST['officer_notes'] ?? null, (int)$user['id'], $uploadId]);
         audit_log((int)$user['id'], 'SKIP_PATH_DOCUMENT_VERIFICATION_SAVED', 'compliance_uploads', $uploadId, ['status' => $status]);
-        $_SESSION['flash_success'] = 'Document verification status saved.';
-        redirect('admin-officer/skip-verification.php?id=' . $uploadId);
+        $_SESSION['flash_success'] = 'Document verification status saved by System Admin.';
+        redirect('admin/skip-verification.php?id=' . $uploadId);
     }
 }
 
@@ -46,12 +46,41 @@ require __DIR__ . '/../partials/header.php';
                 <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="upload_id" value="<?= (int)$selected['id'] ?>">
                 <h2 class="h5"><?= e($selected['property_title']) ?></h2>
-                <p class="text-secondary"><?= e($selected['landlord_name']) ?> · <?= e($selected['email']) ?></p>
-                <ul>
-                    <li>Approved Resolution: <?= e($selected['approved_resolution_path']) ?></li>
-                    <li>Zoning Clearance: <?= e($selected['zoning_clearance_path']) ?></li>
-                    <li>Proof of Ownership: <?= e($selected['proof_of_ownership_path']) ?></li>
-                </ul>
+                <p class="text-secondary mb-3"><?= e($selected['landlord_name']) ?> · <?= e($selected['email']) ?></p>
+                <div class="list-group mb-4">
+                    <?php 
+                    $docFields = [
+                        'Approved Resolution / Endorsement' => 'approved_resolution_path',
+                        'Zoning Clearance' => 'zoning_clearance_path',
+                        'Proof of Ownership' => 'proof_of_ownership_path',
+                        'Building Permit' => 'building_permit_path',
+                        'Certificate of Occupancy' => 'certificate_of_occupancy_path',
+                        'Barangay Business Clearance' => 'barangay_business_clearance_path',
+                        'Mayor\'s Business Permit' => 'mayors_business_permit_path',
+                        'Fire Safety Inspection Certificate' => 'fire_safety_inspection_certificate_path',
+                        'Sanitary Permit' => 'sanitary_permit_path',
+                        'BIR Registration' => 'bir_registration_path',
+                        'Government ID' => 'government_id_path'
+                    ];
+                    foreach ($docFields as $label => $field): 
+                        if (!empty($selected[$field])):
+                            $previewUrl = '../../public/document_preview.php?type=compliance&id=' . (int)$selected['id'] . '&field=' . urlencode($field);
+                    ?>
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong class="d-block"><?= e($label) ?></strong>
+                                <small class="text-secondary"><?= e(basename($selected[$field])) ?></small>
+                                <?php if ($field === 'government_id_path' && !empty($selected['government_id_type'])): ?>
+                                    <div class="mt-1"><span class="badge text-bg-secondary"><?= e($selected['government_id_type']) ?> <?= e($selected['government_id_number']) ?></span></div>
+                                <?php endif; ?>
+                            </div>
+                            <a href="<?= e($previewUrl) ?>" target="_blank" class="btn btn-sm btn-outline-primary flex-shrink-0 ms-3">Preview</a>
+                        </div>
+                    <?php 
+                        endif;
+                    endforeach; 
+                    ?>
+                </div>
                 <label class="form-label">Verification Status</label>
                 <select class="form-select mb-3" name="status">
                     <option value="PENDING_VERIFICATION" <?= $selected['status']==='PENDING_VERIFICATION'?'selected':'' ?>>Pending</option>

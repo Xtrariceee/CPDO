@@ -10,23 +10,106 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reque
     $existing->execute([(int)$user['id']]);
     if ($existing->fetch()) {
         $_SESSION['flash_error'] = 'You already have a pending upgrade request. Please wait for admin review.';
-    } else {
-        $pdo  = db();
-        $stmt = $pdo->prepare('INSERT INTO role_upgrade_requests (user_id, from_role, to_role, reason) VALUES (?, "tenant", "landlord", ?)');
-        $stmt->execute([(int)$user['id'], $reason ?: null]);
-        $requestId = (int)$pdo->lastInsertId();
-        audit_log((int)$user['id'], 'ROLE_UPGRADE_REQUESTED', 'role_upgrade_requests', $requestId, ['from' => 'tenant', 'to' => 'landlord']);
-        notify_role(ROLE_SYSTEM_ADMIN, null, 'Role Upgrade Request',
-            user_full_name($user) . ' (' . $user['email'] . ') has requested to upgrade from Tenant to Landlord.');
-        $_SESSION['flash_success'] = 'Your upgrade request has been submitted. An admin will review it shortly.';
+        redirect('tenant/dashboard.php');
     }
+
+    // Require these documents for eligibility: mayor's permit, barangay clearance,
+    // BIR registration and government ID (file + type + number).
+    $requiredDocs = ['mayors_business_permit', 'barangay_business_clearance', 'bir_registration', 'government_id'];
+    $missing = [];
+    foreach ($requiredDocs as $k) {
+        if (empty($_FILES[$k]['name'])) { $missing[] = $k; }
+    }
+
+    if (!empty($missing)) {
+        $_SESSION['flash_error'] = 'Please upload all required eligibility documents: ' . implode(', ', $missing) . '.';
+        redirect('tenant/dashboard.php');
+    }
+
+    // All required files are present — proceed with upload and persistence.
+    if (true) {
+        try {
+            $uploaded = [];
+            foreach ($requiredDocs as $k) {
+                $uploaded[$k] = secure_upload($_FILES[$k], 'compliance/' . $user['id']);
+            }
+
+            $govType = trim($_POST['government_id_type'] ?? '');
+            $govNumber = trim($_POST['government_id_number'] ?? '');
+            if (empty($govType) || empty($govNumber) || empty($uploaded['government_id'])) {
+                $_SESSION['flash_error'] = 'Government ID type, number, and file are required for upgrade.';
+                redirect('tenant/dashboard.php');
+            }
+
+            $pdo = db();
+            $ins = $pdo->prepare(
+                'INSERT INTO compliance_uploads (
+                    landlord_id, property_title, property_address,
+                    mayors_business_permit_path, barangay_business_clearance_path, bir_registration_path,
+                    government_id_path, government_id_type, government_id_number, status, created_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "PENDING_VERIFICATION", NOW())'
+            );
+            $ins->execute([
+                (int)$user['id'],
+                'Account Eligibility',
+                null,
+                $uploaded['mayors_business_permit'],
+                $uploaded['barangay_business_clearance'],
+                $uploaded['bir_registration'],
+                $uploaded['government_id'],
+                $govType,
+                $govNumber,
+            ]);
+
+            $complianceId = (int)$pdo->lastInsertId();
+            audit_log((int)$user['id'], 'ROLE_UPGRADE_SUBMITTED_WITH_DOCS', 'compliance_uploads', $complianceId);
+
+            // Insert the upgrade request as well
+            $stmt = $pdo->prepare('INSERT INTO role_upgrade_requests (user_id, from_role, to_role, reason, compliance_upload_id) VALUES (?, "tenant", "landlord", ?, ?)');
+            $stmt->execute([(int)$user['id'], $reason ?: null, $complianceId]);
+            $requestId = (int)$pdo->lastInsertId();
+            audit_log((int)$user['id'], 'ROLE_UPGRADE_REQUESTED', 'role_upgrade_requests', $requestId, ['from' => 'tenant', 'to' => 'landlord', 'compliance_upload_id' => $complianceId]);
+
+            notify_role(ROLE_SYSTEM_ADMIN, null, 'Role Upgrade Request with Eligibility Documents',
+                user_full_name($user) . ' (' . $user['email'] . ") submitted an upgrade request with eligibility documents (compliance_uploads id: $complianceId)."
+            );
+
+            $_SESSION['flash_success'] = 'Your upgrade request and eligibility documents have been submitted. A System Admin will verify them shortly.';
+            redirect('tenant/dashboard.php');
+        } catch (Throwable $e) {
+            $_SESSION['flash_error'] = 'Upload failed: ' . $e->getMessage();
+            redirect('tenant/dashboard.php');
+        }
+    }
+
+    // Fallback: no files submitted — legacy request flow
+    $pdo  = db();
+    $stmt = $pdo->prepare('INSERT INTO role_upgrade_requests (user_id, from_role, to_role, reason) VALUES (?, "tenant", "landlord", ?)');
+    $stmt->execute([(int)$user['id'], $reason ?: null]);
+    $requestId = (int)$pdo->lastInsertId();
+    audit_log((int)$user['id'], 'ROLE_UPGRADE_REQUESTED', 'role_upgrade_requests', $requestId, ['from' => 'tenant', 'to' => 'landlord']);
+    notify_role(ROLE_SYSTEM_ADMIN, null, 'Role Upgrade Request',
+        user_full_name($user) . ' (' . $user['email'] . ') has requested to upgrade from Tenant to Landlord.');
+    $_SESSION['flash_success'] = 'Your upgrade request has been submitted. An admin will review it shortly.';
     redirect('tenant/dashboard.php');
 }
 
-/* â”€â”€ Data queries â”€â”€ */
+/* ── Data queries ── */
 $upgradeReq = db()->prepare('SELECT * FROM role_upgrade_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 1');
 $upgradeReq->execute([(int)$user['id']]);
 $upgradeRequest = $upgradeReq->fetch();
+
+$tenantAppsStmt = db()->prepare(
+    'SELECT ra.*, p.title AS property_title, p.address AS property_address, 
+            CONCAT_WS(" ", u.first_name, u.last_name) AS landlord_name
+     FROM rental_applications ra
+     JOIN properties p ON p.id = ra.property_id
+     JOIN users u ON u.id = p.landlord_id
+     WHERE ra.tenant_id = ?
+     ORDER BY ra.created_at DESC'
+);
+$tenantAppsStmt->execute([(int)$user['id']]);
+$tenantApplications = $tenantAppsStmt->fetchAll();
 
 // Search / filter
 $search = trim($_GET['search'] ?? '');
@@ -64,8 +147,8 @@ require __DIR__ . '/../partials/header.php';
 
 .td-page {
     min-height: calc(100vh - 64px);
-    background: #fff;
-    padding: 32px 0 64px;
+    background: transparent;
+    padding: 0 0 64px;
 }
 
 /* Glass card base */
@@ -154,7 +237,7 @@ require __DIR__ . '/../partials/header.php';
 </style>
 
 <div class="td-page">
-<div class="container-fluid" style="max-width:1200px;margin:0 auto;padding:0 20px;">
+<div class="container-fluid p-0">
 
     <!-- Page header -->
     <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start gap-3 mb-4">
@@ -218,6 +301,56 @@ require __DIR__ . '/../partials/header.php';
 
         <!-- Left: Property Discovery -->
         <div class="col-lg-8">
+            <?php if (!empty($tenantApplications)): ?>
+            <div class="td-glass p-4 mb-4">
+                <h2 class="td-section-title mb-1">My Rental Applications</h2>
+                <p class="td-section-sub mb-3">Track status and discuss visits with landlords</p>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small mb-0">
+                        <thead>
+                            <tr class="table-light">
+                                <th>Property</th>
+                                <th>Landlord</th>
+                                <th>Date Applied</th>
+                                <th>Status</th>
+                                <th class="text-end">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($tenantApplications as $app): ?>
+                                <tr>
+                                    <td>
+                                        <div class="fw-bold text-dark"><?= e($app['property_title']) ?></div>
+                                        <div class="text-secondary" style="font-size:0.75rem;"><?= e($app['property_address']) ?></div>
+                                    </td>
+                                    <td><?= e($app['landlord_name']) ?></td>
+                                    <td><?= date('M d, Y', strtotime($app['created_at'])) ?></td>
+                                    <td>
+                                        <?php
+                                        $badgeClass = match ($app['status']) {
+                                            'PENDING' => 'text-bg-warning',
+                                            'ACCEPTED', 'AGREED' => 'text-bg-info text-dark',
+                                            'REGISTRY_FILLED' => 'text-bg-primary',
+                                            'DRAFT_SENT' => 'text-bg-info text-dark',
+                                            'SIGNED' => 'text-bg-success',
+                                            'PAID', 'COMPLETED' => 'text-bg-success',
+                                            'DECLINED' => 'text-bg-danger',
+                                            default => 'text-bg-secondary'
+                                        };
+                                        ?>
+                                        <span class="badge <?= $badgeClass ?>"><?= e($app['status']) ?></span>
+                                    </td>
+                                    <td class="text-end">
+                                        <a href="application-status.php?id=<?= (int)$app['id'] ?>" class="btn btn-sm btn-outline-warning text-dark fw-bold" style="font-size: 0.75rem;">View Application</a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <div class="td-glass p-4">
                 <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start gap-2 mb-3">
                     <div>
@@ -258,16 +391,45 @@ require __DIR__ . '/../partials/header.php';
                             <div class="col-sm-6 col-xl-4">
                                 <?php $imgClass = match ($i % 3) { 1 => 'td-prop-img-alt', 2 => 'td-prop-img-alt2', default => '' }; ?>
                                 <article class="td-glass td-prop-card">
-                                    <div class="td-prop-img <?= $imgClass ?>">
-                                        <span><?= e(mb_strtoupper(mb_substr($prop['title'], 0, 2))) ?></span>
-                                        <span class="td-verified-badge">Verified</span>
-                                    </div>
+                                    <?php 
+                                    $propDetails = json_decode($prop['extended_details'] ?? '{}', true) ?: [];
+                                    $images = $propDetails['image_gallery'] ?? [];
+                                    $videos = $propDetails['video_gallery'] ?? [];
+                                    if (!empty($images)): 
+                                        $imgUrl = rtrim($config['app']['base_url'], '/') . '/' . $images[0];
+                                    ?>
+                                        <div class="td-prop-img p-0" style="overflow:hidden;">
+                                            <img src="<?= e($imgUrl) ?>" alt="<?= e($prop['title']) ?>" style="width:100%; height:100%; object-fit:cover;">
+                                            <span class="td-verified-badge">Verified</span>
+                                        </div>
+                                    <?php elseif (!empty($videos)): 
+                                        $vidUrl = rtrim($config['app']['base_url'], '/') . '/' . $videos[0];
+                                    ?>
+                                        <div class="td-prop-img p-0" style="overflow:hidden; background:#000;">
+                                            <video src="<?= e($vidUrl) ?>" style="width:100%; height:100%; object-fit:cover;" muted playsinline></video>
+                                            <span class="td-verified-badge">Verified</span>
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="td-prop-img <?= $imgClass ?>">
+                                            <span><?= e(mb_strtoupper(mb_substr($prop['title'], 0, 2))) ?></span>
+                                            <span class="td-verified-badge">Verified</span>
+                                        </div>
+                                    <?php endif; ?>
                                     <div class="td-prop-body">
                                         <h3 class="td-prop-title"><?= e($prop['title']) ?></h3>
                                         <p class="td-prop-location"><span>Location:</span> <?= e($prop['address']) ?></p>
                                         <div class="td-prop-details">
-                                            <span class="td-prop-detail">2 Beds</span>
-                                            <span class="td-prop-detail">1 Bath</span>
+                                            <?php
+                                            $bedrooms = (int)($propDetails['bedrooms'] ?? 0);
+                                            $bathrooms = $propDetails['bathrooms'] ?? '0';
+                                            $bedsLabel = $bedrooms === 0 ? 'Studio' : $bedrooms . ' Bed' . ($bedrooms > 1 ? 's' : '');
+                                            $bathsLabel = $bathrooms . ' Bath' . (is_numeric($bathrooms) && (float)$bathrooms > 1 ? 's' : '');
+                                            ?>
+                                            <span class="td-prop-detail"><?= e($bedsLabel) ?></span>
+                                            <span class="td-prop-detail"><?= e($bathsLabel) ?></span>
+                                            <?php if (!empty($propDetails['floor_area'])): ?>
+                                                <span class="td-prop-detail"><?= e($propDetails['floor_area']) ?> <?= e($propDetails['floor_area_unit'] ?? 'sqm') ?></span>
+                                            <?php endif; ?>
                                         </div>
                                         <p class="td-prop-rent">₱<?= number_format((float)$prop['monthly_rent'], 0) ?><span>/month</span></p>
                                         <a class="td-btn-view" href="../landlord/property-view.php?id=<?= (int)$prop['id'] ?>">View Details</a>
@@ -371,7 +533,7 @@ require __DIR__ . '/../partials/header.php';
             <h2 class="h5 mb-0" id="upgrade-modal-title">Become a Landlord</h2>
             <button class="preview-modal-close" data-modal-close aria-label="Close">&times;</button>
         </div>
-        <form method="post" class="modal-body">
+        <form method="post" enctype="multipart/form-data" class="modal-body">
             <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
             <input type="hidden" name="action" value="request_upgrade">
             <p class="text-secondary small mb-3">
@@ -380,6 +542,38 @@ require __DIR__ . '/../partials/header.php';
             <div class="mb-3">
                 <label class="form-label">Reason <span class="text-secondary fw-normal">(optional)</span></label>
                 <textarea class="form-control" name="reason" rows="3" placeholder="Briefly explain why you'd like to become a landlord…"></textarea>
+            </div>
+            <hr>
+            <p class="small mb-2"><strong>Required eligibility documents</strong> — upload government ID (file + type + number) and at least supporting business documents.</p>
+            <div class="mb-2">
+                <label class="form-label">Mayor's Permit <span class="text-danger">(required)</span></label>
+                <input type="file" name="mayors_business_permit" accept=".pdf,.jpg,.jpeg,.png" class="form-control" required>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Barangay Business Clearance <span class="text-danger">(required)</span></label>
+                <input type="file" name="barangay_business_clearance" accept=".pdf,.jpg,.jpeg,.png" class="form-control" required>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">BIR Registration <span class="text-danger">(required)</span></label>
+                <input type="file" name="bir_registration" accept=".pdf,.jpg,.jpeg,.png" class="form-control" required>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Government ID <span class="text-danger">(required)</span></label>
+                <input type="file" name="government_id" accept=".pdf,.jpg,.jpeg,.png" class="form-control mb-2" required>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <select name="government_id_type" class="form-select" required>
+                            <option value="">Select ID type</option>
+                            <option value="philippine_id">Philippine ID</option>
+                            <option value="passport">Passport</option>
+                            <option value="drivers_license">Driver's License</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <input type="text" name="government_id_number" class="form-control" placeholder="ID number" required>
+                    </div>
+                </div>
             </div>
             <div class="d-flex gap-2 justify-content-end">
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-modal-close>Cancel</button>

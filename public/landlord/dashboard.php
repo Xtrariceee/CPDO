@@ -2,17 +2,48 @@
 require_once __DIR__ . '/../../app/bootstrap.php';
 $user = require_role([ROLE_LANDLORD]);
 
-$status = landlord_compliance_status((int)$user['id']);
-
 // ── Own properties ──────────────────────────────────────────────────────────
-$propertiesStmt = db()->prepare('SELECT * FROM properties WHERE landlord_id = ? ORDER BY updated_at DESC');
-$propertiesStmt->execute([(int)$user['id']]);
+$search = trim($_GET['search'] ?? '');
+if ($search !== '') {
+    $likeSearch = '%' . $search . '%';
+    $propertiesStmt = db()->prepare('SELECT * FROM properties WHERE landlord_id = ? AND (title LIKE ? OR address LIKE ? OR description LIKE ?) ORDER BY updated_at DESC');
+    $propertiesStmt->execute([(int)$user['id'], $likeSearch, $likeSearch, $likeSearch]);
+} else {
+    $propertiesStmt = db()->prepare('SELECT * FROM properties WHERE landlord_id = ? ORDER BY updated_at DESC');
+    $propertiesStmt->execute([(int)$user['id']]);
+}
 $properties = $propertiesStmt->fetchAll();
 
 // ── Recent CPDO applications ─────────────────────────────────────────────────
 $appsStmt = db()->prepare('SELECT * FROM applications WHERE landlord_id = ? ORDER BY updated_at DESC LIMIT 10');
 $appsStmt->execute([(int)$user['id']]);
 $applications = $appsStmt->fetchAll();
+
+// ── Skip Path Compliance Uploads ─────────────────────────────────────────────
+$skipStmt = db()->prepare('SELECT * FROM compliance_uploads WHERE landlord_id = ? ORDER BY created_at DESC');
+$skipStmt->execute([(int)$user['id']]);
+$skipUploads = $skipStmt->fetchAll();
+
+// ── Pending and Recent tenant inquiries ─────────────────────────────────────
+$pendingInquiriesStmt = db()->prepare(
+    'SELECT COUNT(*) FROM rental_applications ra
+     JOIN properties p ON p.id = ra.property_id
+     WHERE p.landlord_id = ? AND ra.status = "PENDING"'
+);
+$pendingInquiriesStmt->execute([(int)$user['id']]);
+$pendingInquiries = (int)$pendingInquiriesStmt->fetchColumn();
+
+$recentInquiriesStmt = db()->prepare(
+    'SELECT ra.*, p.title AS property_title, CONCAT_WS(" ", u.first_name, u.last_name) AS tenant_name
+     FROM rental_applications ra
+     JOIN properties p ON p.id = ra.property_id
+     JOIN users u ON u.id = ra.tenant_id
+     WHERE p.landlord_id = ?
+     ORDER BY ra.created_at DESC
+     LIMIT 5'
+);
+$recentInquiriesStmt->execute([(int)$user['id']]);
+$recentInquiries = $recentInquiriesStmt->fetchAll();
 
 // ── Quick stats ──────────────────────────────────────────────────────────────
 $totalProperties  = count($properties);
@@ -29,13 +60,6 @@ $monthlyRevenue = array_sum(array_map(
     fn($p) => $p['status'] === 'ACTIVE' ? (float)$p['monthly_rent'] : 0.0,
     $properties
 ));
-
-// ── Compliance banner CSS class ──────────────────────────────────────────────
-$bannerClass = match ($status['state']) {
-    'ELIGIBLE'     => 'compliance-banner--eligible',
-    'UNDER_REVIEW' => 'compliance-banner--review',
-    default        => 'compliance-banner--required',
-};
 
 // ── Helper: map phase_status to a Bootstrap badge class ─────────────────────
 function app_badge_class(string $phase): string
@@ -73,7 +97,6 @@ function app_phase_label(string $phase): string
     };
 }
 
-// ── Sample CPDO applications for demo when none exist ───────────────────────
 $displayApps = $applications;
 
 require __DIR__ . '/../partials/header.php';
@@ -91,10 +114,15 @@ require __DIR__ . '/../partials/header.php';
 
     .landlord-dash .stats-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(5, minmax(0, 1fr));
         gap: 18px;
         margin-bottom: 1.5rem;
     }
+
+    .landlord-dash .stats-grid .stat-card--inquiries::before {
+        background: radial-gradient(circle, rgba(246, 207, 74, 0.25), transparent 70%) !important;
+    }
+
 
     .landlord-dash .stats-grid .stat-card {
         position: relative;
@@ -259,12 +287,18 @@ require __DIR__ . '/../partials/header.php';
             width: 24px;
             height: 24px;
         }
+        .occupancy-badge--pending-rules {
+            background: #fff2f0 !important;
+            color: #b42318 !important;
+            border: 1px solid #ffc9c2 !important;
+        }
+        .occupancy-badge--pending-rules::before {
+            background: #b42318 !important;
+        }
     }
 </style>
 
 <script>document.body.classList.add('landlord-dash');</script>
-
-<div class="page-shell">
 
     <!-- ── Page header ──────────────────────────────────────────────────── -->
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
@@ -273,51 +307,12 @@ require __DIR__ . '/../partials/header.php';
             <h1 class="dash-header-title mb-1">Welcome back, <?= e($user['first_name']) ?></h1>
             <p class="dash-header-sub">Manage CPDO compliance and your rental property listings.</p>
         </div>
-        <a class="btn-glass-primary" href="<?= $status['state'] === 'ELIGIBLE' ? 'property-form.php' : 'compliance-gateway.php' ?>">
+        <a class="btn-glass-primary" href="property-form.php">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/>
             </svg>
-            <?= $status['state'] === 'ELIGIBLE' ? 'Add Listing' : 'Unlock Listing' ?>
+            Add Listing
         </a>
-    </div>
-
-    <!-- ── Compliance alert banner ──────────────────────────────────────── -->
-    <div class="compliance-banner <?= e($bannerClass) ?> mb-4" role="alert">
-        <div class="compliance-banner-icon" aria-hidden="true">
-            <?php if ($status['state'] === 'ELIGIBLE'): ?>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                    <path d="m9 11 3 3L22 4"></path>
-                </svg>
-            <?php elseif ($status['state'] === 'UNDER_REVIEW'): ?>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <path d="M12 6v6l4 2"></path>
-                </svg>
-            <?php else: ?>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                    <path d="M12 9v4"></path>
-                    <path d="M12 17h.01"></path>
-                </svg>
-            <?php endif; ?>
-        </div>
-
-        <div class="flex-grow-1">
-            <p class="compliance-banner-title mb-1"><?= e($status['label']) ?></p>
-            <p class="compliance-banner-body">
-                <?php if ($status['state'] === 'ELIGIBLE'): ?>
-                    Compliance record is approved or verified. Property listing is enabled — add new listings anytime.
-                <?php elseif ($status['state'] === 'UNDER_REVIEW'): ?>
-                    Submission is under review. Listing remains locked until the CPDO approves or verifies the application.
-                <?php else: ?>
-                    Land reclassification or rezoning must be completed before listing a property.
-                    <a href="compliance-gateway.php" class="fw-bold" style="color:inherit;text-decoration:underline;">Start</a>
-                <?php endif; ?>
-            </p>
-        </div>
-
-        <span class="dlp-badge align-self-start">DLP: Confidential</span>
     </div>
 
     <!-- ── Quick stats row ──────────────────────────────────────────────── -->
@@ -385,6 +380,25 @@ require __DIR__ . '/../partials/header.php';
             </p>
         </div>
 
+        <!-- Tenant Inquiries -->
+        <a href="applications.php" class="glass-card stat-card stat-card--inquiries h-100 text-decoration-none" style="display:block;">
+            <div class="stat-card-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+            </div>
+
+            <p class="stat-card-label">Tenant Inquiries</p>
+
+            <p class="stat-card-value" style="color: #8a6400;">
+                <?= number_format($pendingInquiries) ?>
+            </p>
+
+            <p class="stat-card-sub">
+                <?= $pendingInquiries === 1 ? 'Inquiry' : 'Inquiries' ?> Pending
+            </p>
+        </a>
+
         <!-- Monthly Revenue -->
         <div class="glass-card stat-card stat-card--revenue h-100">
             <div class="stat-card-icon" aria-hidden="true">
@@ -410,19 +424,25 @@ require __DIR__ . '/../partials/header.php';
     <!-- ── My Property Listings ─────────────────────────────────────────── -->
     <div class="glass-panel p-4 mb-4">
 
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-3 mb-3">
             <div>
                 <h2 class="section-title mb-0">My Property Listings</h2>
                 <p class="section-sub mt-1">
                     <?= $properties ? count($properties) . ' listing' . (count($properties) !== 1 ? 's' : '') . ' on record' : 'No listings yet' ?>
                 </p>
             </div>
-            <a class="btn-glass-outline" href="<?= $status['state'] === 'ELIGIBLE' ? 'property-form.php' : 'compliance-gateway.php' ?>">
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/>
-                </svg>
-                <?= $status['state'] === 'ELIGIBLE' ? 'Add Listing' : 'Unlock Listing' ?>
-            </a>
+            <div class="d-flex flex-column flex-sm-row gap-3 align-items-sm-center">
+                <form method="get" class="d-flex align-items-center position-relative">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="position-absolute ms-3 text-secondary" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <input type="search" name="search" class="form-control form-control-sm ps-5" placeholder="Search listings..." value="<?= e($search) ?>" style="border-radius: 20px; border-color: #f0dfad; min-width: 200px;">
+                </form>
+                <a class="btn-glass-outline flex-shrink-0" href="property-form.php">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/>
+                    </svg>
+                    Add Listing
+                </a>
+            </div>
         </div>
 
         <hr class="glass-divider mb-4">
@@ -432,22 +452,49 @@ require __DIR__ . '/../partials/header.php';
             <?php foreach ($properties as $i => $property):
                 $thumbIdx = ($i % 3) + 1;
                 $initials = mb_strtoupper(mb_substr($property['title'], 0, 2));
-                $occupancy = match ($property['status']) {
+                
+                $isPending = ($property['status'] === 'PENDING');
+                $isPendingRules = $isPending && empty($property['rules_accepted']);
+                $isPendingDetails = $isPending && !$isPendingRules; // Could be expanded to check if details are missing, but for now we route to details or publish
+                
+                $occupancy = $isPending ? 'pending' : match ($property['status']) {
                     'ACTIVE'  => 'occupied',
-                    'PENDING' => 'pending',
                     default   => 'inactive',
                 };
-                $occupancyLabel = match ($occupancy) {
-                    'occupied' => 'Occupied',
-                    'pending'  => 'Pending',
-                    default    => 'Inactive',
+                $occupancyLabel = $isPending ? 'Draft' : match ($property['status']) {
+                    'ACTIVE'  => 'Occupied',
+                    default   => 'Inactive',
                 };
+                $nextStepUrl = $isPendingRules ? 'house-rules.php?id=' . (int)$property['id'] : 'property-details.php?id=' . (int)$property['id'];
+                
+                $propDetails = json_decode($property['extended_details'] ?? '{}', true) ?: [];
+                $images = $propDetails['image_gallery'] ?? [];
+                $videos = $propDetails['video_gallery'] ?? [];
+                
+                $bedrooms = (int)($propDetails['bedrooms'] ?? 0);
+                $bathrooms = $propDetails['bathrooms'] ?? '0';
+                $bedsLabel = $bedrooms === 0 ? 'Studio' : $bedrooms . ' Bed' . ($bedrooms > 1 ? 's' : '');
+                $bathsLabel = $bathrooms . ' Bath' . (is_numeric($bathrooms) && (float)$bathrooms > 1 ? 's' : '');
             ?>
             <div class="col-12 col-sm-6 col-xl-4">
                 <article class="property-card h-100">
-                    <div class="property-thumb property-thumb--<?= $thumbIdx ?>" aria-hidden="true">
-                        <?= e($initials) ?>
-                    </div>
+                    <?php if (!empty($images)): 
+                        $imgUrl = rtrim($config['app']['base_url'], '/') . '/' . $images[0];
+                    ?>
+                        <div class="property-thumb p-0" style="overflow:hidden;" aria-hidden="true">
+                            <img src="<?= e($imgUrl) ?>" alt="<?= e($property['title']) ?>" style="width:100%; height:100%; object-fit:cover;">
+                        </div>
+                    <?php elseif (!empty($videos)): 
+                        $vidUrl = rtrim($config['app']['base_url'], '/') . '/' . $videos[0];
+                    ?>
+                        <div class="property-thumb p-0" style="overflow:hidden; background:#000;" aria-hidden="true">
+                            <video src="<?= e($vidUrl) ?>" style="width:100%; height:100%; object-fit:cover;" muted playsinline></video>
+                        </div>
+                    <?php else: ?>
+                        <div class="property-thumb property-thumb--<?= $thumbIdx ?>" aria-hidden="true">
+                            <?= e($initials) ?>
+                        </div>
+                    <?php endif; ?>
                     <div class="property-card-body">
                         <h3 class="property-card-title"><?= e($property['title']) ?></h3>
                         <p class="property-card-address">
@@ -456,6 +503,15 @@ require __DIR__ . '/../partials/header.php';
                             </svg>
                             <?= e($property['address']) ?>
                         </p>
+                        <div class="d-flex gap-2 mb-2 text-secondary" style="font-size:0.75rem; font-weight:600;">
+                            <span><?= e($bedsLabel) ?></span>
+                            <span>&middot;</span>
+                            <span><?= e($bathsLabel) ?></span>
+                            <?php if (!empty($propDetails['floor_area'])): ?>
+                                <span>&middot;</span>
+                                <span><?= e($propDetails['floor_area']) ?> <?= e($propDetails['floor_area_unit'] ?? 'sqm') ?></span>
+                            <?php endif; ?>
+                        </div>
                         <p class="property-card-rent">
                             ₱<?= number_format((float)$property['monthly_rent'], 0) ?><span>/mo</span>
                         </p>
@@ -464,8 +520,18 @@ require __DIR__ . '/../partials/header.php';
                         </span>
                     </div>
                     <div class="property-card-actions">
-                        <a class="btn btn-outline-primary btn-sm" href="property-form.php?id=<?= (int)$property['id'] ?>">Edit</a>
-                        <a class="btn btn-outline-secondary btn-sm" href="property-view.php?id=<?= (int)$property['id'] ?>">View Tenants</a>
+                        <?php if ($isPending): ?>
+                            <div class="d-flex flex-column gap-2 w-100">
+                                <a class="btn btn-warning btn-sm fw-bold text-dark w-100 d-block text-center" href="<?= e($nextStepUrl) ?>">Continue Draft</a>
+                                <div class="d-flex gap-2">
+                                    <a class="btn btn-outline-primary btn-sm flex-fill" href="property-form.php?id=<?= (int)$property['id'] ?>">Edit</a>
+                                    <a class="btn btn-outline-secondary btn-sm flex-fill" href="property-view.php?id=<?= (int)$property['id'] ?>">View</a>
+                                </div>
+                            </div>
+                        <?php else: ?>
+                            <a class="btn btn-outline-primary btn-sm" href="property-form.php?id=<?= (int)$property['id'] ?>">Edit</a>
+                            <a class="btn btn-outline-secondary btn-sm" href="property-view.php?id=<?= (int)$property['id'] ?>">View Tenants</a>
+                        <?php endif; ?>
                     </div>
                 </article>
             </div>
@@ -481,75 +547,66 @@ require __DIR__ . '/../partials/header.php';
                 </svg>
             </div>
             <h3>No listings yet</h3>
-            <p>Approved CPDO workflow or verified legal documents are required before listing a property.</p>
-            <a class="btn-glass-primary" href="compliance-gateway.php">Get Started</a>
+            <p>Complete the CPDO workflow or upload compliance documents for your property address to start listing.</p>
+            <a class="btn-glass-primary" href="property-form.php">Add Listing</a>
         </div>
         <?php endif; ?>
 
     </div><!-- /property panel -->
 
-    <!-- ── CPDO Applications Tracker ────────────────────────────────────── -->
-    <div class="glass-panel cpdo-app-panel p-4 mb-4">
-
+    <!-- ── Recent Tenant Inquiries ──────────────────────────────────────── -->
+    <div class="glass-panel p-4 mb-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
-                <h2 class="section-title mb-0">CPDO Applications</h2>
-                <p class="section-sub mt-1">Track land reclassification and rezoning submissions</p>
+                <h2 class="section-title mb-0">Tenant Inquiries</h2>
+                <p class="section-sub mt-1">Screen applicants and manage rental agreement drafts</p>
             </div>
-            <a class="btn-glass-primary" href="application-form.php">New Application</a>
+            <a class="btn-glass-primary" href="applications.php">View All Inquiries</a>
         </div>
 
         <hr class="glass-divider mb-0">
 
         <div class="glass-table-wrap table-responsive">
-            <table class="glass-table table align-middle" aria-label="CPDO Applications">
+            <table class="glass-table table align-middle" aria-label="Tenant Inquiries">
                 <thead>
                     <tr>
-                        <th scope="col">Registry / ID</th>
-                        <th scope="col">Property Address</th>
-                        <th scope="col">Process Type</th>
+                        <th scope="col">Property</th>
+                        <th scope="col">Applicant</th>
+                        <th scope="col">Monthly Income</th>
                         <th scope="col">Status</th>
                         <th scope="col" class="text-end">Action</th>
                     </tr>
                 </thead>
                 <tbody>
-                <?php if ($displayApps): ?>
-                    <?php foreach ($displayApps as $app):
-                        $badgeClass = app_badge_class($app['phase_status']);
-                        $phaseLabel = app_phase_label($app['phase_status']);
-                        $openUrl    = match (true) {
-                            in_array($app['phase_status'], ['DRAFT', 'SUBMITTED'], true)
-                                && $app['current_process'] <= 2
-                                => 'requirements-upload.php?id=' . (int)$app['id'],
-                            default => 'application-show.php?id=' . (int)$app['id'],
+                <?php if ($recentInquiries): ?>
+                    <?php foreach ($recentInquiries as $inq):
+                        $badgeClass = match ($inq['status']) {
+                            'PENDING' => 'bg-warning text-dark',
+                            'ACCEPTED', 'AGREED' => 'bg-info text-dark',
+                            'REGISTRY_FILLED' => 'bg-primary',
+                            'DRAFT_SENT' => 'bg-info text-dark',
+                            'SIGNED', 'PAID', 'COMPLETED' => 'bg-success',
+                            'DECLINED' => 'bg-danger',
+                            default => 'bg-secondary'
                         };
-                        $openLabel = $app['phase_status'] === 'DRAFT' ? 'Continue' : 'Open';
                     ?>
                     <tr>
-                        <td><span class="registry-id"><?= e($app['registry_number']) ?></span></td>
-                        <td><?= e($app['property_title']) ?></td>
-                        <td>
-                            <span class="process-type">
-                                <?= $app['current_process'] <= 1 ? 'Land Reclassification' : 'Rezoning (P' . (int)$app['current_process'] . ')' ?>
-                            </span>
-                        </td>
-                        <td><span class="badge <?= e($badgeClass) ?>"><?= e($phaseLabel) ?></span></td>
+                        <td><strong><?= e($inq['property_title']) ?></strong></td>
+                        <td><?= e($inq['tenant_name']) ?></td>
+                        <td>₱<?= number_format((float)$inq['monthly_income'], 2) ?></td>
+                        <td><span class="badge <?= e($badgeClass) ?>"><?= e($inq['status']) ?></span></td>
                         <td class="text-end">
-                            <a class="btn btn-sm" href="<?= e($openUrl) ?>"><?= e($openLabel) ?></a>
+                            <a class="btn btn-sm" href="application-review.php?id=<?= (int)$inq['id'] ?>">Review</a>
                         </td>
                     </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr class="empty-row">
-                        <td colspan="5">No applications started yet.</td>
+                        <td colspan="5">No tenant inquiries received yet.</td>
                     </tr>
                 <?php endif; ?>
                 </tbody>
             </table>
-        </div><!-- /table-responsive -->
-
-    </div><!-- /applications panel -->
-
-</div><!-- /page-shell -->
-
+        </div>
+    </div>
 <?php require __DIR__ . '/../partials/footer.php'; ?>

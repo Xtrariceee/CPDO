@@ -322,35 +322,268 @@ function effective_requirements(): array
     return $merged;
 }
 
-function landlord_compliance_status(int $landlordId): array
+/**
+ * Normalise an address string for comparison.
+ * Lowercases, collapses whitespace, strips punctuation so minor formatting
+ * differences ("Brgy. 1" vs "brgy 1") still match.
+ */
+function normalise_address(string $address): string
 {
-    $approved = db()->prepare('SELECT * FROM applications WHERE landlord_id = ? AND phase_status = "APPROVED" ORDER BY updated_at DESC LIMIT 1');
-    $approved->execute([$landlordId]);
-    if ($row = $approved->fetch()) {
-        return ['state' => 'ELIGIBLE', 'label' => 'Eligible to List Property', 'source' => 'application', 'record' => $row];
-    }
+    $a = mb_strtolower(trim($address));
+    $a = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $a); // strip punctuation
+    $a = preg_replace('/\s+/', ' ', $a);               // collapse spaces
+    return trim($a);
+}
 
-    $verified = db()->prepare('SELECT * FROM compliance_uploads WHERE landlord_id = ? AND status = "VERIFIED" ORDER BY reviewed_at DESC LIMIT 1');
-    $verified->execute([$landlordId]);
-    if ($row = $verified->fetch()) {
-        return ['state' => 'ELIGIBLE', 'label' => 'Eligible to List Property', 'source' => 'skip', 'record' => $row];
-    }
+/**
+ * Property-specific compliance check.
+ *
+ * ELIGIBLE when:
+ *   - An APPROVED application exists for this landlord whose property_address
+ *     normalises to the same value as $propertyAddress, OR
+ *   - A VERIFIED compliance_uploads row exists for this landlord AND the same
+ *     normalised property_address.
+ *
+ * UNDER_REVIEW when either record exists but is not yet approved/verified.
+ *
+ * REQUIRED otherwise — including when another address is approved but this one
+ * is not yet in the system.
+ *
+ * @param int    $landlordId
+ * @param string $propertyAddress  The address of the specific listing being created.
+ */
+function property_compliance_status(int $landlordId, string $propertyAddress): array
+{
+    $norm = normalise_address($propertyAddress);
 
-    $underReview = db()->prepare(
-        'SELECT phase_status FROM applications WHERE landlord_id = ? AND phase_status NOT IN ("APPROVED","DISAPPROVED") ORDER BY updated_at DESC LIMIT 1'
+    // ── Approved CPDO application for this address ────────────────────────
+    $appStmt = db()->prepare(
+        'SELECT * FROM applications
+         WHERE landlord_id = ? AND phase_status = "APPROVED"
+         ORDER BY updated_at DESC'
     );
-    $underReview->execute([$landlordId]);
-    if ($row = $underReview->fetch()) {
-        return ['state' => 'UNDER_REVIEW', 'label' => 'Under Review', 'source' => 'application', 'record' => $row];
+    $appStmt->execute([$landlordId]);
+    foreach ($appStmt->fetchAll() as $row) {
+        if (normalise_address((string)($row['property_address'] ?? '')) === $norm) {
+            return ['state' => 'ELIGIBLE', 'label' => 'Eligible to List Property',
+                    'source' => 'application', 'record' => $row];
+        }
     }
 
-    $pendingSkip = db()->prepare('SELECT * FROM compliance_uploads WHERE landlord_id = ? AND status = "PENDING_VERIFICATION" ORDER BY created_at DESC LIMIT 1');
-    $pendingSkip->execute([$landlordId]);
-    if ($row = $pendingSkip->fetch()) {
-        return ['state' => 'UNDER_REVIEW', 'label' => 'Under Review', 'source' => 'skip', 'record' => $row];
+    // ── Verified skip-path upload for this address ────────────────────────
+    $skipStmt = db()->prepare(
+        'SELECT * FROM compliance_uploads
+         WHERE landlord_id = ? AND status = "VERIFIED"
+         ORDER BY reviewed_at DESC'
+    );
+    $skipStmt->execute([$landlordId]);
+    foreach ($skipStmt->fetchAll() as $row) {
+        $rowAddr = (string)($row['property_address'] ?? $row['property_title'] ?? '');
+        if (normalise_address($rowAddr) === $norm) {
+            return ['state' => 'ELIGIBLE', 'label' => 'Eligible to List Property',
+                    'source' => 'skip', 'record' => $row];
+        }
+    }
+
+    // ── In-progress CPDO application for this address ─────────────────────
+    $reviewStmt = db()->prepare(
+        'SELECT * FROM applications
+         WHERE landlord_id = ? AND phase_status NOT IN ("APPROVED","DISAPPROVED")
+         ORDER BY updated_at DESC'
+    );
+    $reviewStmt->execute([$landlordId]);
+    foreach ($reviewStmt->fetchAll() as $row) {
+        if (normalise_address((string)($row['property_address'] ?? '')) === $norm) {
+            return ['state' => 'UNDER_REVIEW', 'label' => 'Under Review',
+                    'source' => 'application', 'record' => $row];
+        }
+    }
+
+    // ── Pending skip-path upload for this address ─────────────────────────
+    $pendStmt = db()->prepare(
+        'SELECT * FROM compliance_uploads
+         WHERE landlord_id = ? AND status = "PENDING_VERIFICATION"
+         ORDER BY created_at DESC'
+    );
+    $pendStmt->execute([$landlordId]);
+    foreach ($pendStmt->fetchAll() as $row) {
+        $rowAddr = (string)($row['property_address'] ?? $row['property_title'] ?? '');
+        if (normalise_address($rowAddr) === $norm) {
+            return ['state' => 'UNDER_REVIEW', 'label' => 'Under Review',
+                    'source' => 'skip', 'record' => $row];
+        }
     }
 
     return ['state' => 'REQUIRED', 'label' => 'Compliance Required', 'source' => null, 'record' => null];
+}
+
+/**
+ * Determine a landlord's eligibility based on required landlord-level documents.
+ * Returns array: [
+ *   'passed' => bool,
+ *   'status' => 'VERIFIED'|'PENDING_VERIFICATION'|'REJECTED'|'NONE',
+ *   'missing' => array of requirement keys still missing,
+ *   'record' => compliance_uploads row or null
+ * ]
+ */
+function landlord_eligibility_status(int $landlordId): array
+{
+    $pdo = db();
+    $stmt = $pdo->prepare('SELECT * FROM compliance_uploads WHERE landlord_id = ? ORDER BY reviewed_at DESC, created_at DESC');
+    $stmt->execute([$landlordId]);
+    $rows = $stmt->fetchAll();
+
+    $required = [
+        'mayors_business_permit_path' => 'mayors_permit',
+        'barangay_business_clearance_path' => 'barangay_business_clearance',
+        'bir_registration_path' => 'bir_registration',
+        'government_id_path' => 'government_id',
+    ];
+
+    foreach ($rows as $row) {
+        $status = strtoupper((string)($row['status'] ?? ''));
+        $missing = [];
+        foreach ($required as $col => $key) {
+            if (empty($row[$col])) {
+                $missing[] = $key;
+            }
+        }
+        // Ensure government ID metadata is present if the file is uploaded
+        if (!empty($row['government_id_path']) && (empty($row['government_id_type']) || empty($row['government_id_number']))) {
+            if (!in_array('government_id', $missing, true)) {
+                $missing[] = 'government_id';
+            }
+        }
+
+        if ($status === 'VERIFIED' && empty($missing)) {
+            return ['passed' => true, 'status' => 'VERIFIED', 'missing' => [], 'record' => $row];
+        }
+
+        // If a record exists but not verified, return its current state and missing items
+        if (in_array($status, ['PENDING_VERIFICATION', 'REJECTED'], true)) {
+            return ['passed' => false, 'status' => $status, 'missing' => $missing, 'record' => $row];
+        }
+    }
+
+    // No compliance_uploads record found for this landlord
+    return ['passed' => false, 'status' => 'NONE', 'missing' => array_values(['mayors_permit','barangay_business_clearance','bir_registration','government_id']), 'record' => null];
+}
+
+/**
+ * Backwards-compatible shim for older callers.
+ * Maps legacy return shape to the newer landlord_eligibility_status.
+ */
+function landlord_compliance_status(int $landlordId): array
+{
+    $res = landlord_eligibility_status($landlordId);
+    $label = $res['passed'] ? 'Eligible' : 'Compliance Required';
+    $source = $res['record'] ? 'skip' : null;
+    return ['state' => $res['passed'] ? 'ELIGIBLE' : 'REQUIRED', 'label' => $label, 'source' => $source, 'record' => $res['record']];
+}
+
+/**
+ * Check whether a property is allowed to be listed/published.
+ * Returns ['allowed' => bool, 'reasons' => array, 'info' => mixed]
+ */
+function property_listing_allowed(int $propertyId): array
+{
+    $pdo = db();
+    $pStmt = $pdo->prepare('SELECT * FROM properties WHERE id = ?');
+    $pStmt->execute([$propertyId]);
+    $property = $pStmt->fetch();
+    if (!$property) {
+        return ['allowed' => false, 'reasons' => ['property_not_found'], 'info' => null];
+    }
+
+    $reasons = [];
+
+    // Prefer compliance_uploads (skip-path)
+    if (!empty($property['compliance_upload_id'])) {
+        $cStmt = $pdo->prepare('SELECT * FROM compliance_uploads WHERE id = ?');
+        $cStmt->execute([(int)$property['compliance_upload_id']]);
+        $c = $cStmt->fetch();
+        if (!$c) {
+            $reasons[] = 'compliance_record_missing';
+        } else {
+            if (strtoupper((string)$c['status']) !== 'VERIFIED') {
+                $reasons[] = 'compliance_not_verified';
+            }
+            if (empty($c['certificate_of_occupancy_path'])) {
+                $reasons[] = 'missing_certificate_of_occupancy';
+            }
+            if (empty($c['fire_safety_inspection_certificate_path'])) {
+                $reasons[] = 'missing_fsic';
+            }
+        }
+    }
+
+    // If linked to a CPDO application, also allow per-application evaluation records
+    if (!empty($property['application_id'])) {
+        $reqs = ['certificate_of_occupancy', 'fire_safety_inspection_certificate'];
+        $placeholders = implode(',', array_fill(0, count($reqs), '?'));
+        $params = array_merge([(int)$property['application_id']], $reqs);
+        $dStmt = $pdo->prepare("SELECT requirement_key, evaluation_status FROM requirement_documents WHERE application_id = ? AND requirement_key IN ($placeholders)");
+        $dStmt->execute($params);
+        $found = [];
+        foreach ($dStmt->fetchAll() as $row) {
+            $found[$row['requirement_key']] = $row['evaluation_status'];
+        }
+        foreach ($reqs as $r) {
+            if (!isset($found[$r]) || strtoupper($found[$r]) !== 'PASSED') {
+                $reasons[] = 'application_missing_' . $r;
+            }
+        }
+    }
+
+    $allowed = empty($reasons);
+    return ['allowed' => $allowed, 'reasons' => array_values(array_unique($reasons)), 'info' => $property];
+}
+
+/**
+ * Admin helper to mark a compliance_uploads record as VERIFIED or REJECTED.
+ * Only a user with role = 'admin' is permitted to perform this action.
+ */
+function admin_verify_compliance_upload(int $complianceId, int $adminUserId, string $newStatus, ?string $notes = null): bool
+{
+    $pdo = db();
+    $userStmt = $pdo->prepare('SELECT role FROM users WHERE id = ?');
+    $userStmt->execute([$adminUserId]);
+    $user = $userStmt->fetch();
+    if (!$user || ($user['role'] ?? '') !== 'admin') {
+        throw new RuntimeException('Only System Admin can perform eligibility verification.');
+    }
+
+    $valid = ['VERIFIED', 'REJECTED'];
+    $newStatus = strtoupper($newStatus);
+    if (!in_array($newStatus, $valid, true)) {
+        throw new InvalidArgumentException('Invalid status. Use VERIFIED or REJECTED.');
+    }
+
+    $cStmt = $pdo->prepare('SELECT * FROM compliance_uploads WHERE id = ?');
+    $cStmt->execute([$complianceId]);
+    $c = $cStmt->fetch();
+    if (!$c) {
+        throw new RuntimeException('Compliance upload record not found.');
+    }
+
+    $update = $pdo->prepare('UPDATE compliance_uploads SET status = ?, officer_notes = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?');
+    $update->execute([$newStatus, $notes, $adminUserId, $complianceId]);
+
+    $action = $newStatus === 'VERIFIED' ? 'ELIGIBILITY_VERIFIED' : 'ELIGIBILITY_REJECTED';
+    audit_log($adminUserId, $action, 'compliance_uploads', $complianceId, ['notes' => $notes]);
+
+    // Notify landlord
+    $landlordId = (int)($c['landlord_id'] ?? 0);
+    if ($landlordId > 0) {
+        $title = $newStatus === 'VERIFIED' ? 'Eligibility Documents Verified' : 'Eligibility Documents Rejected';
+        $message = $newStatus === 'VERIFIED'
+            ? 'Your eligibility documents have been verified by System Admin.'
+            : 'Your eligibility documents were rejected by System Admin. Please review the officer notes and re-upload.';
+        $pdo->prepare('INSERT INTO notifications (user_id, title, message, created_at) VALUES (?, ?, ?, NOW())')
+            ->execute([$landlordId, $title, $message]);
+    }
+
+    return true;
 }
 
 function currency_php(float $amount): string

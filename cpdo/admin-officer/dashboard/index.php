@@ -3,7 +3,12 @@ require_once __DIR__ . '/../../../app/bootstrap_cpdo.php';
 $user = require_role([ROLE_ADMIN_OFFICER, ROLE_SYSTEM_ADMIN]);
 
 $forResolution = officer_applications(['DELIBERATION']);
-$skipPending   = db()->query('SELECT * FROM compliance_uploads WHERE status="PENDING_VERIFICATION" ORDER BY created_at DESC')->fetchAll();
+
+/* clearance requests pending review */
+$clrPending = 0;
+try {
+    $clrPending = (int)db()->query('SELECT COUNT(*) FROM clearance_requests WHERE status="PENDING"')->fetchColumn();
+} catch (Throwable $_) {}
 
 require __DIR__ . '/../../partials/header.php';
 ?>
@@ -53,10 +58,10 @@ require __DIR__ . '/../../partials/header.php';
         </a>
     </div>
     <div class="col-md-6">
-        <a class="zo-card" href="../skip-verification.php">
-            <div class="zo-card-title">Skip Path Verification</div>
-            <div class="zo-card-count"><?= count($skipPending) ?></div>
-            <div class="zo-card-note">Compliance uploads pending document review</div>
+        <a class="zo-card" href="../clearance-review.php">
+            <div class="zo-card-title">Clearance &amp; Certification Requests</div>
+            <div class="zo-card-count"><?= $clrPending ?></div>
+            <div class="zo-card-note">Business clearance requests awaiting review &amp; certificate issuance</div>
         </a>
     </div>
 </div>
@@ -74,14 +79,27 @@ require __DIR__ . '/../../partials/header.php';
                     <td><a class="btn btn-sm btn-primary" href="../final-output.php?id=<?= (int)$app['id'] ?>">Validate &amp; Endorse</a></td>
                 </tr>
             <?php endforeach; ?>
-            <?php foreach ($skipPending as $upload): ?>
-                <tr>
-                    <td>Listing Skip Path</td>
-                    <td><?= e($upload['property_title']) ?></td>
-                    <td><?= e($upload['status']) ?></td>
-                    <td><a class="btn btn-sm btn-primary" href="../skip-verification.php?id=<?= (int)$upload['id'] ?>">Review</a></td>
-                </tr>
-            <?php endforeach; ?>
+            <?php
+            /* clearance requests */
+            try {
+                $clrRows = db()->query(
+                    'SELECT cr.id, cr.title, cr.status,
+                            CONCAT_WS(" ", u.first_name, u.middle_name, u.last_name) AS landlord_name
+                     FROM clearance_requests cr
+                     JOIN users u ON u.id = cr.landlord_id
+                     WHERE cr.status = "PENDING"
+                     ORDER BY cr.created_at ASC LIMIT 20'
+                )->fetchAll();
+                foreach ($clrRows as $cr): ?>
+                    <tr>
+                        <td>Clearance Request</td>
+                        <td><?= e($cr['title']) ?> &middot; <?= e($cr['landlord_name']) ?></td>
+                        <td><span class="badge text-bg-warning"><?= e($cr['status']) ?></span></td>
+                        <td><a class="btn btn-sm btn-primary" href="../clearance-review.php?filter=PENDING">Review</a></td>
+                    </tr>
+                <?php endforeach;
+            } catch (Throwable $_) {}
+            ?>
             </tbody>
         </table>
     </div>

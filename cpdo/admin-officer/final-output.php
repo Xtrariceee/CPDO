@@ -108,6 +108,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('admin-officer/final-output.php?id=' . $applicationId);
     }
 
+    // ── Validate endorsement number is unique per landlord ──────────────────────
+    $checkDupStmt = db()->prepare(
+        'SELECT fo.id FROM final_outputs fo
+         JOIN applications a ON a.id = fo.application_id
+         WHERE a.landlord_id = ? AND fo.endorsement_number = ? AND a.id != ?'
+    );
+    $checkDupStmt->execute([(int)$application['landlord_id'], $endorsementNumber, $applicationId]);
+    if ($checkDupStmt->fetch()) {
+        $_SESSION['flash_error'] = 'Endorsement number already issued to another property for this landlord. Please use a unique number.';
+        redirect('admin-officer/final-output.php?id=' . $applicationId);
+    }
+
     // Build resolution data from POST (all fields editable by AO)
     $existingLandUseMap = [
         'residential'   => 'Residential Zone (R)',
@@ -244,7 +256,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ── Page data ─────────────────────────────────────────────────────────────────
-$applications = officer_applications(['DELIBERATION', 'APPROVED']);
+// Get applications with landlord names for grouping
+$stmt = db()->prepare(
+    'SELECT a.*, CONCAT_WS(" ", u.first_name, u.middle_name, u.last_name) AS landlord_name, u.email AS landlord_email
+     FROM applications a
+     JOIN users u ON u.id = a.landlord_id
+     WHERE a.phase_status IN (?, ?)
+     ORDER BY u.last_name, u.first_name, a.property_title, a.updated_at DESC'
+);
+$stmt->execute(['DELIBERATION', 'APPROVED']);
+$applications = $stmt->fetchAll();
 $application  = $applicationId ? officer_application($applicationId) : ($applications[0] ?? null);
 
 $existingOutput = null;
@@ -386,12 +407,31 @@ textarea.fo-ctrl{min-height:88px;resize:vertical;line-height:1.6}
       <div class="fo-app-list">
         <h2 class="fo-list-hd">Pending Endorsement</h2>
         <?php if ($applications): ?>
-          <?php foreach ($applications as $row): ?>
-            <a class="fo-app-link <?= $application && (int)$application['id'] === (int)$row['id'] ? 'active' : '' ?>"
-               href="final-output.php?id=<?= (int)$row['id'] ?>">
-              <?= e($row['registry_number']) ?>
-              <small><?= e($row['property_title']) ?></small>
-            </a>
+          <?php
+            // Group applications by landlord_id for visual organization
+            $groupedByLandlord = [];
+            foreach ($applications as $row) {
+              $landlordId = (int)$row['landlord_id'];
+              if (!isset($groupedByLandlord[$landlordId])) {
+                $groupedByLandlord[$landlordId] = [
+                  'landlord_name' => $row['landlord_name'],
+                  'apps' => []
+                ];
+              }
+              $groupedByLandlord[$landlordId]['apps'][] = $row;
+            }
+          ?>
+          <?php foreach ($groupedByLandlord as $landlordApps): ?>
+            <div style="padding:8px 0;border-top:1px solid #eef2f7;margin-top:6px;font-size:.65rem;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:#62748a;padding-left:16px;padding-top:10px;">
+              <?= e($landlordApps['landlord_name']) ?>
+            </div>
+            <?php foreach ($landlordApps['apps'] as $row): ?>
+              <a class="fo-app-link <?= $application && (int)$application['id'] === (int)$row['id'] ? 'active' : '' ?>"
+                 href="final-output.php?id=<?= (int)$row['id'] ?>">
+                <?= e($row['registry_number']) ?>
+                <small><?= e($row['property_title']) ?></small>
+              </a>
+            <?php endforeach; ?>
           <?php endforeach; ?>
         <?php else: ?>
           <div class="fo-empty-list">No applications awaiting endorsement.</div>

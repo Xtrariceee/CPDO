@@ -2,15 +2,43 @@
 require_once __DIR__ . '/../../app/bootstrap.php';
 
 $user = require_role([ROLE_LANDLORD]);
-$status = landlord_compliance_status((int)$user['id']);
+verify_csrf();
+
+$propertyId = (int)($_GET['property_id'] ?? $_POST['property_id'] ?? 0);
+$property = null;
+if ($propertyId) {
+    $stmt = db()->prepare('SELECT * FROM properties WHERE id = ? AND landlord_id = ?');
+    $stmt->execute([$propertyId, (int)$user['id']]);
+    $property = $stmt->fetch();
+    if (!$property) {
+        http_response_code(404);
+        exit('Property not found.');
+    }
+}
+
+/* The address of the property the landlord is trying to list */
+$targetAddress = trim($_GET['address'] ?? $_POST['address'] ?? ($property['address'] ?? ''));
+$targetTitle = trim($_GET['title'] ?? $_POST['title'] ?? ($property['title'] ?? ''));
+
+/* If an address is known, check its specific compliance status */
+$status = $targetAddress
+    ? property_compliance_status((int)$user['id'], $targetAddress)
+    : ['state' => 'REQUIRED', 'label' => 'Compliance Required', 'source' => null, 'record' => null];
 
 if ($status['state'] === 'ELIGIBLE') {
-    // ELIGIBLE means fully verified — redirect to the landlord dashboard
-    // where they can manage and add property listings.
-    redirect('landlord/dashboard.php');
+    // Already compliant for this address — send straight to the property form
+    if ($propertyId) {
+        redirect('landlord/property-form.php?id=' . $propertyId);
+    }
+    $dest = $targetAddress
+        ? 'landlord/property-form.php?address=' . urlencode($targetAddress) . ($targetTitle ? '&title=' . urlencode($targetTitle) : '')
+        : 'landlord/property-form.php' . ($targetTitle ? '?title=' . urlencode($targetTitle) : '');
+    redirect($dest);
 }
 
 $isUnderReview = $status['state'] === 'UNDER_REVIEW';
+$encodedAddress = urlencode($targetAddress);
+$encodedTitle = $targetTitle ? '&title=' . urlencode($targetTitle) : '';
 
 require __DIR__ . '/../partials/header.php';
 ?>
@@ -687,7 +715,12 @@ require __DIR__ . '/../partials/header.php';
 
         <div class="gateway-status-pill">
             <span class="gateway-status-dot"></span>
-            <?= e($status['label'] ?? ($isUnderReview ? 'Under Review' : 'Compliance Required')) ?>
+            <?php if ($targetAddress): ?>
+                <?= e(mb_strtoupper(mb_substr($targetAddress, 0, 60)) . (mb_strlen($targetAddress) > 60 ? '…' : '')) ?>
+                &mdash; <?= e($status['label'] ?? ($isUnderReview ? 'Under Review' : 'Compliance Required')) ?>
+            <?php else: ?>
+                <?= e($status['label'] ?? ($isUnderReview ? 'Under Review' : 'Compliance Required')) ?>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -851,8 +884,13 @@ require __DIR__ . '/../partials/header.php';
                     <a class="gateway-btn-disabled" href="#" aria-disabled="true">
                         Under Review
                     </a>
-                <?php else: ?>
-                    <a class="gateway-btn-primary" href="application-form.php">
+                <?php else:
+                    $applicationLink = 'application-form.php' . ($encodedAddress ? '?address=' . $encodedAddress : '');
+                    if ($propertyId) {
+                        $applicationLink .= ($encodedAddress ? '&' : '?') . 'property_id=' . $propertyId;
+                    }
+                ?>
+                    <a class="gateway-btn-primary" href="<?= e($applicationLink) ?>">
                         Start CPDO Workflow
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M5 12h14"></path>
@@ -924,8 +962,14 @@ require __DIR__ . '/../partials/header.php';
                     <a class="gateway-btn-disabled" href="#" aria-disabled="true">
                         Under Review
                     </a>
-                <?php else: ?>
-                    <a class="gateway-btn-outline" href="skip-compliance.php">
+                <?php else:
+                    $skipLink = 'compliance-verification.php' . ($encodedAddress ? '?address=' . $encodedAddress . $encodedTitle : ($encodedTitle ? '?title=' . ltrim($encodedTitle, '&') : ''));
+                    if ($propertyId) {
+                        $skipLink .= strpos($skipLink, '?') === false ? '?' : '&';
+                        $skipLink .= 'property_id=' . $propertyId;
+                    }
+                ?>
+                    <a class="gateway-btn-outline" href="<?= e($skipLink) ?>">
                         I Already Have CPDO Approval
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M5 12h14"></path>

@@ -7,6 +7,7 @@ $activeApplications = (int)db()->query('SELECT COUNT(*) FROM applications WHERE 
 $pendingApprovals   = (int)db()->query('SELECT COUNT(*) FROM applications WHERE status IN ("under_evaluation","for_payment","for_inspection","under_deliberation")')->fetchColumn();
 $pendingUpgrades    = (int)db()->query('SELECT COUNT(*) FROM role_upgrade_requests WHERE status = "PENDING"')->fetchColumn();
 $pendingDesignations = (int)db()->query('SELECT COUNT(*) FROM staff_designation_requests WHERE status = "PENDING"')->fetchColumn();
+$skipPending   = db()->query('SELECT * FROM compliance_uploads WHERE status="PENDING_VERIFICATION" ORDER BY created_at DESC')->fetchAll();
 $logs = db()->query(
     'SELECT al.*, CONCAT_WS(" ", u.first_name, u.middle_name, u.last_name) AS name
      FROM audit_logs al LEFT JOIN users u ON u.id = al.user_id
@@ -43,6 +44,13 @@ require __DIR__ . '/../../partials/header.php';
                     <a href="../users/" class="small fw-bold d-block mt-1" style="color:var(--cpdo-red);">Review →</a>
                 <?php endif; ?>
             </article>
+            <article class="metric-card" style="border-left:4px solid var(--bs-primary);">
+                <span>Skip Path Verification</span>
+                <strong><?= count($skipPending) ?></strong>
+                <?php if (count($skipPending) > 0): ?>
+                    <a href="../skip-verification.php" class="small text-primary fw-bold d-block mt-1">Review →</a>
+                <?php endif; ?>
+            </article>
         </div>
         <div class="row g-4">
             <div class="col-xl-7">
@@ -62,6 +70,27 @@ require __DIR__ . '/../../partials/header.php';
                             <?php endforeach; ?>
                             <?php if (!$applications): ?>
                                 <tr><td colspan="4" class="text-secondary">No applications yet.</td></tr>
+                            <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="gov-card p-4">
+                    <h2 class="h5">Pending Skip Path Verification</h2>
+                    <div class="table-responsive">
+                        <table class="table align-middle">
+                            <thead><tr><th>Property</th><th>Status</th><th>Action</th></tr></thead>
+                            <tbody>
+                            <?php foreach ($skipPending as $upload): ?>
+                                <tr>
+                                    <td><?= e($upload['property_title']) ?></td>
+                                    <td><?= e($upload['status']) ?></td>
+                                    <td><a class="btn btn-sm btn-primary" href="../skip-verification.php?id=<?= (int)$upload['id'] ?>">Review</a></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            <?php if (!$skipPending): ?>
+                                <tr><td colspan="3" class="text-secondary">No pending skip path verifications.</td></tr>
                             <?php endif; ?>
                             </tbody>
                         </table>

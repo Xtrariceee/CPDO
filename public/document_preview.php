@@ -50,6 +50,56 @@ if ($type === 'final_output') {
     exit;
 }
 
+// ── Compliance uploads (Skip path) ──────────────────────────────────────────
+if ($type === 'compliance') {
+    $stmt = db()->prepare('SELECT * FROM compliance_uploads WHERE id = ?');
+    $stmt->execute([$documentId]);
+    $cu = $stmt->fetch();
+
+    if (!$cu) { http_response_code(404); exit('Document not found.'); }
+
+    $allowed = (int)$cu['landlord_id'] === (int)$user['id']
+        || in_array($user['role'], [ROLE_SYSTEM_ADMIN, ROLE_ZONING, ROLE_ADMIN_OFFICER, ROLE_TWG], true);
+    if (!$allowed) { http_response_code(403); exit('Access denied.'); }
+
+    $field = $_GET['field'] ?? '';
+    $allowedFields = [
+        'approved_resolution_path', 'zoning_clearance_path', 'proof_of_ownership_path',
+        'government_id_path', 'building_permit_path', 'certificate_of_occupancy_path',
+        'barangay_business_clearance_path', 'mayors_business_permit_path',
+        'fire_safety_inspection_certificate_path', 'sanitary_permit_path', 'bir_registration_path'
+    ];
+    if (!in_array($field, $allowedFields, true)) {
+        http_response_code(400); exit('Invalid field.');
+    }
+
+    $filePath = $cu[$field];
+    if (empty($filePath)) { http_response_code(404); exit('File not found.'); }
+
+    $absPath    = realpath(__DIR__ . '/../' . $filePath);
+    $storageDir = realpath(__DIR__ . '/../storage');
+
+    if (!$absPath || !$storageDir || !str_starts_with($absPath, $storageDir)) {
+        http_response_code(404); exit('File not found.');
+    }
+
+    $ext  = strtolower(pathinfo($absPath, PATHINFO_EXTENSION));
+    $mime = match ($ext) {
+        'pdf'  => 'application/pdf',
+        'jpg', 'jpeg' => 'image/jpeg',
+        'png'  => 'image/png',
+        default => 'application/octet-stream',
+    };
+
+    header('Content-Type: ' . $mime);
+    $download = isset($_GET['download']) && ($_GET['download'] === '1' || strtolower($_GET['download']) === 'true');
+    header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="compliance-doc.' . $ext . '"');
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Length: ' . filesize($absPath));
+    readfile($absPath);
+    exit;
+}
+
 $stmt = db()->prepare(
     'SELECT rd.*, a.landlord_id
      FROM requirement_documents rd
